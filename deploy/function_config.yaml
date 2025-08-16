@@ -1,0 +1,38 @@
+# Cloud Function deployment configuration
+name: plex-etl-function
+runtime: python39
+trigger:
+  httpsTrigger: {}
+  
+# Alternative scheduled trigger configuration
+# trigger:
+#   eventTrigger:
+#     eventType: google.pubsub.topic.publish
+#     resource: projects/YOUR_PROJECT_ID/topics/etl-schedule
+
+# Environment variables (use Secret Manager in production)
+environmentVariables:
+  GCP_PROJECT_ID: "your-project-id"
+  GCS_BUCKET_NAME: "your-bucket-name"
+  BIGQUERY_DATASET: "plex_analytics"
+
+# Secret Manager references (recommended for production)
+# secretEnvironmentVariables:
+#   - key: MYSQL_PLEX_PASSWORD
+#     projectId: your-project-id
+#     secret: mysql-plex-password
+#     version: latest
+#   - key: MYSQL_QUANTIO_PASSWORD
+#     projectId: your-project-id  
+#     secret: mysql-quantio-password
+#     version: latest
+
+# Resource allocation
+availableMemoryMb: 512
+timeout: 540s
+
+# VPC connector (if MySQL is in private network)
+# vpcConnector: projects/YOUR_PROJECT_ID/locations/YOUR_REGION/connectors/YOUR_CONNECTOR
+
+# Service account with necessary permissions
+# serviceAccountEmail: etl-function@your-project-id.iam.gserviceaccount.com

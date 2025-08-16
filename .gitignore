@@ -1,0 +1,94 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+.ENV/
+
+# Environment variables & secrets
+.env
+.env.local
+.env.*.local
+*.key
+etl-service-account-key.json
+service-account-*.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+etl_progress.log
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb
+
+# Data files (sensitive)
+data/
+*.csv
+*.xlsx
+*.parquet
+
+# Temporary files
+tmp/
+temp/
+deploy_package/
+
+# Google Cloud
+.gcloud/
+application_default_credentials.json
+
+# ETL specific
+backup/
+old_files/
+test_outputs/
+
+# Keep JSON config files but exclude service account keys
+!config/*.json
+*.json
+!requirements*.txt

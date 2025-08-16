@@ -1,0 +1,186 @@
+# ============================================
+# CONFIGURACIÓN DE BASES DE DATOS Y TABLAS
+# ============================================
+
+project_settings:
+  gcp_project_id: "plex-etl-project"
+  region: "us-central1"
+  bigquery_dataset: "plex_analytics"
+  gcs_bucket: "plex-etl-data"
+
+databases:
+  plex:
+    secret_name: "mysql-plex-config"
+    host: "delpuente.quantio.com.ar"
+    port: 3306
+    database: "plex"
+    description: "Base de datos principal Plex"
+    
+    tables:
+      # Tablas principales de facturación
+      factcabecera:
+        description: "Cabecera de facturas"
+        primary_key: "IDComprobante"
+        incremental_field: "emision"
+        priority: high
+        
+      factlineas:
+        description: "Líneas de facturas"
+        primary_key: ["IDComprobante", "orden"]
+        incremental_field: "emision_fecha_hora"
+        priority: high
+        
+      # Tablas maestras
+      sucursales:
+        description: "Sucursales"
+        primary_key: "Sucursal"
+        incremental_field: null  # Master data - full refresh
+        priority: medium
+        
+      medicamentos:
+        description: "Productos/medicamentos"
+        primary_key: "CodPlex"
+        incremental_field: null  # Master data - full refresh
+        priority: medium
+        
+      clientes:
+        description: "Clientes"
+        primary_key: "IDCliente"
+        incremental_field: "fecha_modificacion"
+        priority: medium
+        
+      # Tablas de stock
+      stock:
+        description: "Stock actual"
+        primary_key: ["CodPlex", "Sucursal"]
+        incremental_field: "fecha_actualizacion"
+        priority: high
+        
+      stocklotes:
+        description: "Stock por lotes"
+        primary_key: ["CodPlex", "Lote", "Sucursal"]
+        incremental_field: "fecha_actualizacion"
+        priority: medium
+        
+      # Otras tablas importantes
+      pedidos:
+        description: "Pedidos"
+        primary_key: "IDPedido"
+        incremental_field: "fecha_pedido"
+        priority: medium
+        
+      pedidoslineas:
+        description: "Líneas de pedidos"
+        primary_key: ["IDPedido", "orden"]
+        incremental_field: "fecha_pedido"
+        priority: medium
+
+  quantio:
+    secret_name: "mysql-quantio-config"
+    host: "delpuente.quantio.com.ar"
+    port: 3306
+    database: "plexdr"
+    description: "Base de datos secundaria Quantio"
+    
+    tables:
+      productos:
+        description: "Catálogo de productos"
+        primary_key: "IDProducto"
+        incremental_field: "fecha_modificacion"
+        priority: medium
+        
+      stock:
+        description: "Stock Quantio"
+        primary_key: ["IDProducto", "sucursal"]
+        incremental_field: "fecha_actualizacion"
+        priority: high
+        
+      stocklotes:
+        description: "Stock por lotes Quantio"
+        primary_key: ["IDProducto", "lote", "sucursal"]
+        incremental_field: "fecha_actualizacion"
+        priority: medium
+
+# Configuración de ETL
+etl_settings:
+  schedule:
+    frequency: "every_12_hours"
+    times: ["00:00", "12:00"]
+    timezone: "America/Argentina/Buenos_Aires"
+    
+  incremental:
+    default_hours_back: 12
+    full_refresh_day: "sunday"
+    full_refresh_time: "02:00"
+    
+  batch_size: 10000
+  max_retries: 3
+  timeout_minutes: 30
+
+# Configuración de BigQuery
+bigquery_settings:
+  dataset_location: "US"
+  partition_field: "fecha_proceso"
+  clustering_fields: ["sucursal", "fecha"]
+  
+  tables:
+    plex_factcabecera:
+      partition_type: "DAY"
+      partition_field: "emision"
+      clustering: ["sucursal", "tipo"]
+      
+    plex_factlineas:
+      partition_type: "DAY" 
+      partition_field: "emision_fecha_hora"
+      clustering: ["sucursal", "IDProducto"]
+      
+    plex_stock:
+      partition_type: "DAY"
+      partition_field: "fecha_proceso"
+      clustering: ["sucursal", "CodPlex"]
+
+# Configuración de Storage
+storage_settings:
+  bucket_name: "plex-etl-data"
+  file_format: "parquet"
+  compression: "snappy"
+  partition_by: "date"
+  retention_days: 90
+  
+  paths:
+    raw_data: "raw_data/{database}/{table}/date={date}/"
+    processed_data: "processed_data/{database}/{table}/date={date}/"
+    archive: "archive/{database}/{table}/year={year}/month={month}/"
+
+# Configuración de monitoreo
+monitoring:
+  alerts:
+    - name: "etl_failure"
+      condition: "job_status = 'FAILED'"
+      notification: "email"
+      
+    - name: "data_freshness"
+      condition: "data_age > 13 hours"
+      notification: "slack"
+      
+    - name: "row_count_anomaly"
+      condition: "row_count_change > 50%"
+      notification: "email"
+
+# Vistas a crear en BigQuery
+views:
+  v_facturas_consolidadas:
+    description: "Facturas con líneas y datos maestros"
+    source_tables: ["plex_factcabecera", "plex_factlineas", "plex_sucursales", "plex_medicamentos"]
+    
+  v_ventas_diarias:
+    description: "Resumen de ventas por día y sucursal"
+    source_tables: ["v_facturas_consolidadas"]
+    
+  v_stock_actual:
+    description: "Stock actual consolidado"
+    source_tables: ["plex_stock", "quantio_stock"]
+    
+  v_productos_maestro:
+    description: "Catálogo maestro de productos"
+    source_tables: ["plex_medicamentos", "quantio_productos"]

@@ -1,0 +1,17 @@
+# Minimal requirements (sin PyArrow para evitar problemas de compilación)
+pandas==2.2.2
+pymysql==1.1.1
+python-dotenv==1.0.1
+
+# Google Cloud dependencies
+google-cloud-storage==2.18.0
+google-cloud-bigquery==3.25.0
+google-cloud-secret-manager==2.20.0
+functions-framework==3.8.1
+
+# Excel support
+openpyxl==3.1.2
+
+# Development dependencies
+jupyter==1.1.1
+ipykernel==6.29.5

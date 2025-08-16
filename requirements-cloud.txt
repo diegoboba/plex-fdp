@@ -1,0 +1,12 @@
+# Cloud Functions optimized requirements (minimal)
+functions-framework==3.8.1
+google-cloud-storage==2.18.0
+google-cloud-bigquery==3.25.0
+google-cloud-secret-manager==2.20.0
+pandas==2.2.2
+PyMySQL==1.1.1
+PyYAML==6.0.1
+python-dotenv==1.0.1
+
+# Logging for Cloud Functions
+google-cloud-logging==3.11.0

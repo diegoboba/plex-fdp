@@ -1,0 +1,294 @@
+# ============================================
+# CONFIGURACIÓN COMPLETA DE BASES DE DATOS
+# ============================================
+
+project_settings:
+  gcp_project_id: "plex-etl-project"
+  region: "us-central1"
+  bigquery_dataset: "plex_analytics"
+  gcs_bucket: "plex-etl-data"
+  analysis_date: "2025-08-16"
+
+databases:
+  plex:
+    secret_name: "mysql-plex-config"
+    host: "delpuente.quantio.com.ar"
+    port: 3306
+    database: "plex"
+    description: "Base de datos principal Plex - Sistema farmacéutico"
+    total_tables: 44
+    total_rows: 113673665
+    priority_tables_count: 9
+    priority_tables_rows: 29893322
+    
+    # TABLAS PRINCIPALES DE NEGOCIO
+    priority_tables:
+      # === FACTURACIÓN (Core Business) ===
+      factcabecera:
+        description: "Cabecera de facturas - Tabla principal de ventas"
+        columns: 26
+        rows: 9230441
+        primary_keys: ["IDComprobante"]
+        incremental_field: "Emision"
+        priority: critical
+        business_area: "sales"
+        columns_detail: ["IDComprobante", "IDGlobal", "Sucursal", "Emision", "Letra", "PuntoVta", "Numero", "Tipo", "IDUsuario", "IDCliente", "TipoVenta", "TotalComprobante", "TotalCobertura"]
+        size_category: "large"
+        count_method: "exact"
+        
+      factlineas:
+        description: "Líneas de facturas - Detalle de productos vendidos"
+        columns: 29
+        rows: 13542639
+        primary_keys: ["IDComprobante", "Orden"]
+        incremental_field: "emision_fecha_hora"
+        priority: critical
+        business_area: "sales"
+        columns_detail: ["IDComprobante", "IDGlobal", "Orden", "IDProducto", "IDRubro", "Cantidad", "PrecioUnitario", "PrecioReal", "Total", "ImporteACOS"]
+        size_category: "very_large"
+        count_method: "exact"
+        
+      # === DATOS MAESTROS ===
+      sucursales:
+        description: "Sucursales/Farmacias"
+        columns: 27
+        rows: 22
+        primary_keys: ["Sucursal"]
+        incremental_field: null
+        priority: high
+        business_area: "master_data"
+        columns_detail: ["Sucursal", "Empresa", "NombreFantasia", "Domicilio", "Telefono", "Email", "Localidad", "Provincia"]
+        size_category: "small"
+        count_method: "exact"
+        
+      medicamentos:
+        description: "Catálogo de medicamentos/productos"
+        columns: 62
+        rows: 772746
+        primary_keys: ["CodPlex"]
+        incremental_field: "fecha_modificacion"
+        priority: high
+        business_area: "master_data"
+        columns_detail: ["CodPlex", "Troquel", "Producto", "Presentaci", "Precio", "Costo", "Activo", "Unidades", "Gtin"]
+        size_category: "large"
+        count_method: "exact"
+        
+      clientes:
+        description: "Base de clientes"
+        columns: 51
+        rows: 186915
+        primary_keys: ["CodCliente"]
+        incremental_field: "fecha_modificacion"
+        priority: high
+        business_area: "master_data"
+        columns_detail: ["CodCliente", "Nombre", "Documento", "Domicilio", "Telefono", "Email", "TipoIva", "Cuit"]
+        size_category: "medium"
+        count_method: "exact"
+        
+      # === INVENTARIO ===
+      stock:
+        description: "Stock actual por sucursal"
+        columns: 11
+        rows: 622908
+        primary_keys: ["Sucursal", "IDProducto"]
+        incremental_field: "fecha_actualizacion"
+        priority: critical
+        business_area: "inventory"
+        columns_detail: ["Sucursal", "IDProducto", "Cantidad", "Unidades", "Minimo", "Maximo"]
+        size_category: "large"
+        count_method: "exact"
+        
+      stocklotes:
+        description: "Stock por lotes y vencimientos"
+        columns: 26
+        rows: 4741722
+        primary_keys: ["IDLote"]
+        incremental_field: "fecha_actualizacion"
+        priority: high
+        business_area: "inventory"
+        columns_detail: ["IDLote", "IDProducto", "NumeroLote", "FechaVencimiento", "Cantidad", "Unidades", "Sucursal"]
+        size_category: "very_large"
+        count_method: "exact"
+        
+      # === PEDIDOS ===
+      pedidos:
+        description: "Pedidos a proveedores"
+        columns: 9
+        rows: 5823
+        primary_keys: ["IDPedido"]
+        incremental_field: "FechaDesde"
+        priority: medium
+        business_area: "purchasing"
+        columns_detail: ["IDPedido", "Sucursal", "FechaDesde", "FechaHasta", "Descripcion", "IDEstado"]
+        size_category: "small"
+        count_method: "exact"
+        
+      pedidoslineas:
+        description: "Líneas de pedidos"
+        columns: 19
+        rows: 976106
+        primary_keys: ["IDPedido", "IDProducto", "Orden"]
+        incremental_field: "fecha_pedido"
+        priority: medium
+        business_area: "purchasing"
+        columns_detail: ["IDPedido", "IDProducto", "Orden", "IDProveedor", "Cantidad", "Precio"]
+        size_category: "large"
+        count_method: "exact"
+    
+    # TABLAS GRANDES (solo para referencia, no prioridad ETL)
+    large_tables:
+      asientos_detalle:
+        description: "Detalle contable - Solo referencia"
+        rows: 33107339
+        priority: low
+        business_area: "accounting"
+        
+      asientos:
+        description: "Asientos contables - Solo referencia"
+        rows: 13694806
+        priority: low
+        business_area: "accounting"
+        
+      factpagos:
+        description: "Pagos de facturas"
+        rows: 10193908
+        priority: medium
+        business_area: "sales"
+        
+      factlineascostos:
+        description: "Costos de líneas de facturas"
+        rows: 9429992
+        priority: medium
+        business_area: "sales"
+    
+    # TABLAS CON PROBLEMAS
+    problematic_tables:
+      reccabecera:
+        description: "Cabecera de recibos - TIMEOUT ERROR"
+        error: "MySQL connection timeout during query"
+        solution: "Usar paginación o query optimizada"
+        priority: medium
+
+  quantio:
+    secret_name: "mysql-quantio-config"
+    host: "delpuente.quantio.com.ar"
+    port: 3306
+    database: "plexdr"
+    description: "Base de datos Quantio - Productos e inventario complementario"
+    total_tables: 3
+    total_rows: 267508
+    priority_tables_count: 3
+    priority_tables_rows: 267508
+    
+    priority_tables:
+      productos:
+        description: "Catálogo extendido de productos"
+        columns: 64
+        rows: 91512
+        primary_keys: ["IDProducto"]
+        incremental_field: "fecha_modificacion"
+        priority: high
+        business_area: "master_data"
+        columns_detail: ["IDProducto", "IDLaboratorio", "Troquel", "Codebar", "Producto", "Presentacion", "Unidades", "Costo", "Activo"]
+        size_category: "medium"
+        count_method: "exact"
+        
+      stock:
+        description: "Stock Quantio por depósito"
+        columns: 7
+        rows: 19245
+        primary_keys: ["IDProducto", "IdDeposito"]
+        incremental_field: "fecha_actualizacion"
+        priority: high
+        business_area: "inventory"
+        columns_detail: ["IDProducto", "IdDeposito", "Cantidad", "Unidades", "Minimo", "Critico"]
+        size_category: "small"
+        count_method: "exact"
+        
+      stocklotes:
+        description: "Stock por lotes Quantio"
+        columns: 9
+        rows: 156751
+        primary_keys: ["IDLote"]
+        incremental_field: "fecha_actualizacion"
+        priority: medium
+        business_area: "inventory"
+        columns_detail: ["IDLote", "IDProducto", "NumeroLote", "Serie", "FechaVencimiento", "Cantidad"]
+        size_category: "medium"
+        count_method: "exact"
+
+# CONFIGURACIÓN DE ETL POR PRIORIDAD
+etl_strategies:
+  critical_tables:
+    - "plex.factcabecera"
+    - "plex.factlineas"
+    - "plex.stock"
+    frequency: "every_12_hours"
+    batch_size: 10000
+    timeout_minutes: 45
+    
+  high_priority:
+    - "plex.sucursales"
+    - "plex.medicamentos"
+    - "plex.clientes"
+    - "quantio.productos"
+    - "quantio.stock"
+    frequency: "daily"
+    batch_size: 15000
+    timeout_minutes: 30
+    
+  medium_priority:
+    - "plex.stocklotes"
+    - "plex.pedidos"
+    - "plex.pedidoslineas"
+    - "quantio.stocklotes"
+    frequency: "daily"
+    batch_size: 20000
+    timeout_minutes: 20
+
+# CONFIGURACIÓN PARA TABLAS PROBLEMÁTICAS
+timeout_handling:
+  reccabecera:
+    strategy: "paginated"
+    page_size: 1000
+    order_by: "IDComprobante"
+    max_concurrent_pages: 3
+    
+  large_tables:
+    strategy: "incremental_only"
+    max_rows_per_batch: 5000
+    parallel_processing: true
+
+# CONFIGURACIÓN DE BIGQUERY
+bigquery_optimization:
+  partitioning:
+    plex_factcabecera: 
+      field: "Emision"
+      type: "DAY"
+    plex_factlineas:
+      field: "emision_fecha_hora" 
+      type: "DAY"
+    plex_stock:
+      field: "fecha_proceso"
+      type: "DAY"
+      
+  clustering:
+    plex_factcabecera: ["Sucursal", "Tipo", "IDCliente"]
+    plex_factlineas: ["Sucursal", "IDProducto", "IDComprobante"]
+    plex_stock: ["Sucursal", "IDProducto"]
+    plex_medicamentos: ["Activo", "IDLaboratorio"]
+
+# RESUMEN GLOBAL
+global_summary:
+  total_databases: 2
+  total_tables: 47
+  total_rows: 113941173
+  priority_tables_total: 12
+  priority_tables_rows: 30160830
+  estimated_size_gb: 50
+  largest_tables:
+    - {database: "plex", table: "asientos_detalle", rows: 33107339}
+    - {database: "plex", table: "asientos", rows: 13694806}
+    - {database: "plex", table: "factlineas", rows: 13542563}
+    - {database: "plex", table: "factpagos", rows: 10193908}
+    - {database: "plex", table: "factlineascostos", rows: 9429992}
