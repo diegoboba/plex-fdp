@@ -19,7 +19,8 @@ class Config:
     MYSQL_QUANTIO_DATABASE = os.getenv('MYSQL_QUANTIO_DATABASE', 'quantio')
     
     # Google Cloud
-    GCP_PROJECT_ID = os.getenv('GCP_PROJECT_ID')
+    GCP_PROJECT_ID = os.getenv('GCP_PROJECT_ID', 'plex-etl-project')
+    BIGQUERY_PROJECT = os.getenv('GCP_PROJECT_ID', 'plex-etl-project')  # Alias for compatibility
     GCS_BUCKET_NAME = os.getenv('GCS_BUCKET_NAME')
     BIGQUERY_DATASET = os.getenv('BIGQUERY_DATASET', 'plex_analytics')
     

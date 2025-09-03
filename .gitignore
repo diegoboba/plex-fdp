@@ -35,6 +35,11 @@ ENV/
 *.key
 etl-service-account-key.json
 service-account-*.json
+*-service-account-*.json
+*credential*.json
+*secret*.json
+secrets_setup.sh
+setup_secrets.py
 
 # IDE
 .vscode/
@@ -56,6 +61,9 @@ Thumbs.db
 *.log
 logs/
 etl_progress.log
+etl_*.log
+etl_output.log
+etl_final*.log
 
 # Testing
 .pytest_cache/
@@ -87,6 +95,20 @@ application_default_credentials.json
 backup/
 old_files/
 test_outputs/
+
+# Virtual environments específicos del proyecto
+plex/
+plex-env/
+
+# Archivos de análisis y debug temporales
+debug_dataframe.py
+test_streaming_etl.py
+manual_mysql_queries.py
+analyze_mysql_relationships.sql
+create_typed_views.py
+
+# Archivos SQL temporales
+*.sql
 
 # Keep JSON config files but exclude service account keys
 !config/*.json

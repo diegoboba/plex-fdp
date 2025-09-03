@@ -1,6 +1,6 @@
 import pymysql
 import pandas as pd
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from .secret_manager import SecretManager
 import os
 import time
@@ -134,7 +134,18 @@ class DatabaseConnector:
                         query += f" LIMIT {limit}"
                 
                 print(f"Executing query on {database_name}.{table_name} (attempt {attempt + 1}/{max_retries})...")
-                df = pd.read_sql(query, connection)
+                
+                # Use manual cursor approach instead of pd.read_sql to avoid header duplication bug
+                with connection.cursor() as cursor:
+                    cursor.execute(query)
+                    results = cursor.fetchall()
+                    
+                    if results:
+                        # Convert to DataFrame manually
+                        df = pd.DataFrame(results)
+                    else:
+                        df = pd.DataFrame()
+                
                 print(f"Extracted {len(df)} rows from {database_name}.{table_name}")
                 
                 return df
@@ -245,6 +256,74 @@ class DatabaseConnector:
             
         except Exception as e:
             print(f"Error listing tables in {database_name}: {str(e)}")
+            raise
+        finally:
+            if connection:
+                connection.close()
+    
+    def get_table_schema(self, database_name: str, table_name: str) -> List[Dict]:
+        """Get detailed schema information for a table"""
+        connection = None
+        try:
+            connection = self.get_mysql_connection(database_name)
+            
+            # Query INFORMATION_SCHEMA to get column details
+            schema_query = """
+            SELECT 
+                COLUMN_NAME,
+                DATA_TYPE,
+                COLUMN_TYPE,
+                IS_NULLABLE,
+                COLUMN_DEFAULT,
+                COLUMN_COMMENT,
+                CHARACTER_MAXIMUM_LENGTH,
+                NUMERIC_PRECISION,
+                NUMERIC_SCALE
+            FROM INFORMATION_SCHEMA.COLUMNS 
+            WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s
+            ORDER BY ORDINAL_POSITION
+            """
+            
+            with connection.cursor() as cursor:
+                # Get the actual database name we're connected to
+                cursor.execute("SELECT DATABASE() as current_db")
+                current_db_result = cursor.fetchone()
+                actual_database = current_db_result['current_db']
+                
+                print(f"Executing schema query with actual_database='{actual_database}', table='{table_name}'")
+                cursor.execute(schema_query, (actual_database, table_name))
+                columns = cursor.fetchall()
+                
+            print(f"Retrieved schema for {database_name}.{table_name}: {len(columns)} columns")
+            
+            # Debug: if no columns found, let's check what tables exist
+            if len(columns) == 0:
+                print(f"⚠️  No columns found! Let's debug...")
+                with connection.cursor() as cursor:
+                    # Check what database we're actually connected to
+                    cursor.execute("SELECT DATABASE() as current_db")
+                    current_db = cursor.fetchone()
+                    print(f"Current database: {current_db}")
+                    
+                    # Check what tables exist in this database
+                    cursor.execute("SHOW TABLES")
+                    tables = cursor.fetchall()
+                    print(f"Available tables: {[list(t.values())[0] for t in tables[:5]]}")  # Show first 5
+                    
+                    # Try to describe the table directly
+                    try:
+                        cursor.execute(f"DESCRIBE {table_name}")
+                        describe_result = cursor.fetchall()
+                        print(f"DESCRIBE {table_name}: {len(describe_result)} columns")
+                        if len(describe_result) > 0:
+                            print(f"First few columns: {describe_result[:3]}")
+                    except Exception as e:
+                        print(f"DESCRIBE failed: {e}")
+            
+            return columns
+            
+        except Exception as e:
+            print(f"Error getting schema for {database_name}.{table_name}: {str(e)}")
             raise
         finally:
             if connection:

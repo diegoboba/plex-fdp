@@ -1,6 +1,6 @@
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
-from utils.config import Config
+from ..utils.config import Config
 
 class BigQueryManager:
     def __init__(self):
@@ -85,100 +85,85 @@ class BigQueryManager:
             print(f"Error creating view {view_name}: {str(e)}")
             raise
     
-    def create_analytical_views(self):
-        """Create analytical views based on the existing SQL logic"""
-        
-        # View 1: Facturas con líneas consolidadas (based on factlineascab)
-        facturas_view_query = f"""
-        CREATE OR REPLACE VIEW `{self.config.GCP_PROJECT_ID}.{self.dataset_id}.v_facturas_lineas` AS
-        SELECT 
-            fl.*,
-            fc.emision,
-            fc.tipo,
-            fc.sucursal,
-            fc.hora,
-            DATETIME_ADD(
-                DATETIME_ADD(fc.emision, INTERVAL EXTRACT(HOUR FROM fc.hora) HOUR),
-                INTERVAL EXTRACT(MINUTE FROM fc.hora) MINUTE
-            ) AS emision_fecha_hora
-        FROM `{self.config.GCP_PROJECT_ID}.{self.dataset_id}.plex_factlineas` fl 
-        LEFT JOIN `{self.config.GCP_PROJECT_ID}.{self.dataset_id}.plex_factcabecera` fc 
-            ON fc.IDComprobante = fl.IDComprobante
-        """
-        
-        # View 2: Pedidos con líneas consolidadas (based on pedidoslineascab)
-        pedidos_view_query = f"""
-        CREATE OR REPLACE VIEW `{self.config.GCP_PROJECT_ID}.{self.dataset_id}.v_pedidos_lineas` AS
-        SELECT 
-            pl.*,
-            p.sucursal,
-            DATETIME_ADD(
-                DATETIME_ADD(p.FechaDesde, INTERVAL EXTRACT(HOUR FROM p.HoraDesde) HOUR),
-                INTERVAL EXTRACT(MINUTE FROM p.HoraDesde) MINUTE
-            ) AS fecha_desde_comp,
-            DATETIME_ADD(
-                DATETIME_ADD(p.FechaHasta, INTERVAL EXTRACT(HOUR FROM p.HoraHasta) HOUR),
-                INTERVAL EXTRACT(MINUTE FROM p.HoraHasta) MINUTE
-            ) AS fecha_hasta_comp
-        FROM `{self.config.GCP_PROJECT_ID}.{self.dataset_id}.quantio_plex_pedidoslineas` pl 
-        LEFT JOIN `{self.config.GCP_PROJECT_ID}.{self.dataset_id}.quantio_plex_pedidos` p 
-            ON pl.IDPedido = p.IDPedido
-        """
-        
-        # View 3: Reporte BI consolidado
-        reporte_bi_view_query = f"""
-        CREATE OR REPLACE VIEW `{self.config.GCP_PROJECT_ID}.{self.dataset_id}.v_reporte_bi_consolidado` AS
-        SELECT
-            t.*,
-            fc.IDCliente
-        FROM `{self.config.GCP_PROJECT_ID}.{self.dataset_id}.quantio_reporte_bi` t 
-        LEFT JOIN `{self.config.GCP_PROJECT_ID}.{self.dataset_id}.plex_factcabecera` fc 
-            ON t.idcomprobante = fc.IDComprobante
-        """
-        
-        # View 4: Ventas por sucursal y producto
-        ventas_view_query = f"""
-        CREATE OR REPLACE VIEW `{self.config.GCP_PROJECT_ID}.{self.dataset_id}.v_ventas_analysis` AS
-        SELECT 
-            s.NombreFantasia as sucursal_nombre,
-            m.Producto as producto_nombre,
-            m.Laboratorio,
-            DATE(fl.emision) as fecha_venta,
-            SUM(fl.Cantidad * 
-                CASE 
-                    WHEN fl.TipoCantidad = 'C' THEN m.Unidades 
-                    ELSE 1 
-                END
-            ) as unidades_vendidas,
-            SUM(fl.Total) as total_ventas,
-            COUNT(DISTINCT fl.IDComprobante) as num_facturas
-        FROM `{self.config.GCP_PROJECT_ID}.{self.dataset_id}.v_facturas_lineas` fl
-        LEFT JOIN `{self.config.GCP_PROJECT_ID}.{self.dataset_id}.plex_sucursales` s 
-            ON fl.sucursal = s.Sucursal
-        LEFT JOIN `{self.config.GCP_PROJECT_ID}.{self.dataset_id}.plex_medicamentos` m
-            ON fl.IDProducto = m.CodPlex
-        WHERE fl.tipo IN ('FV', 'TK', 'TF')
-            AND fl.emision >= DATE_SUB(CURRENT_DATE(), INTERVAL 365 DAY)
-        GROUP BY 1, 2, 3, 4
-        """
-        
-        # Execute all view creation queries
-        views = [
-            ("v_facturas_lineas", facturas_view_query),
-            ("v_pedidos_lineas", pedidos_view_query), 
-            ("v_reporte_bi_consolidado", reporte_bi_view_query),
-            ("v_ventas_analysis", ventas_view_query)
-        ]
-        
-        for view_name, query in views:
-            try:
-                job = self.run_query(query)
-                job.result()  # Wait for completion
-                print(f"Created view: {view_name}")
-            except Exception as e:
-                print(f"Error creating view {view_name}: {str(e)}")
-                continue
+    # NOTA: Código de analytical views removido - movido a PLAN.md sección "Next Steps"
+    # Las views necesitan ser rediseñadas con la estructura actual de datos
     
+    def load_dataframe_to_table(self, df, table_name: str, write_disposition: str = 'WRITE_APPEND', 
+                               schema: list = None):
+        """Load pandas DataFrame directly to BigQuery table with proper schema"""
+        try:
+            table_id = f"{self.config.GCP_PROJECT_ID}.{self.dataset_id}.{table_name}"
+            
+            # Configure job settings
+            if schema:
+                # Use explicit schema - FORCE disable autodetect
+                job_config = bigquery.LoadJobConfig(
+                    write_disposition=write_disposition,
+                    schema=schema,
+                    autodetect=False,
+                    source_format=bigquery.SourceFormat.CSV,  # Force explicit format
+                    skip_leading_rows=0,  # No header row to skip
+                    allow_quoted_newlines=True,
+                    allow_jagged_rows=False,
+                    max_bad_records=0  # Fail on any schema mismatch
+                )
+                print(f"🔒 FORCING explicit schema with {len(schema)} fields")
+                print(f"Schema fields: {[f.name + ':' + f.field_type for f in schema[:5]]}...")
+            else:
+                # Use autodetect when no schema provided
+                job_config = bigquery.LoadJobConfig(
+                    write_disposition=write_disposition,
+                    autodetect=True
+                )
+                print("Using autodetect for schema")
+            
+            # Load DataFrame
+            job = self.client.load_table_from_dataframe(df, table_id, job_config=job_config)
+            job.result()  # Wait for the job to complete
+            
+            print(f"Loaded {len(df)} rows to {table_id}")
+            return job
+            
+        except Exception as e:
+            print(f"Error loading DataFrame to {table_name}: {str(e)}")
+            raise
+    
+    def create_table_if_not_exists(self, table_name: str, schema: list = None):
+        """Create BigQuery table if it doesn't exist"""
+        try:
+            table_id = f"{self.config.GCP_PROJECT_ID}.{self.dataset_id}.{table_name}"
+            
+            # Check if table exists
+            try:
+                self.client.get_table(table_id)
+                print(f"Table {table_id} already exists")
+                return
+            except NotFound:
+                pass
+            
+            # Create table
+            table = bigquery.Table(table_id, schema=schema)
+            table = self.client.create_table(table)
+            print(f"Created table {table_id}")
+            return table
+            
+        except Exception as e:
+            print(f"Error creating table {table_name}: {str(e)}")
+            raise
+    
+    def truncate_table(self, table_name: str):
+        """Truncate a BigQuery table"""
+        try:
+            table_id = f"{self.config.GCP_PROJECT_ID}.{self.dataset_id}.{table_name}"
+            query = f"DELETE FROM `{table_id}` WHERE TRUE"
+            job = self.client.query(query)
+            job.result()
+            print(f"Truncated table {table_id}")
+            
+        except Exception as e:
+            print(f"Error truncating table {table_name}: {str(e)}")
+            raise
+
     def test_query(self, query: str, limit: int = 10):
         """Test a query with a limit"""
         test_query = f"SELECT * FROM ({query}) LIMIT {limit}"

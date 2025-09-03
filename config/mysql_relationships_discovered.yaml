@@ -1,0 +1,2113 @@
+foreign_keys:
+  FK_Ciudades:
+    column: IDCiudad
+    referenced_column: idCiudad
+    referenced_table: ciudades
+    table: clientes
+    type: single_column
+  FK_Ciudades_lab:
+    column: IDCiudad
+    referenced_column: idCiudad
+    referenced_table: ciudades
+    table: laboratorios
+    type: single_column
+  FK_Ciudades_obs:
+    column: idCiudad
+    referenced_column: idCiudad
+    referenced_table: ciudades
+    table: obsociales
+    type: single_column
+  FK_Ciudades_pro:
+    column: IDCiudad
+    referenced_column: idCiudad
+    referenced_table: ciudades
+    table: proveedores
+    type: single_column
+  FK_FactCabecera_Clientes:
+    column: IDCliente
+    referenced_column: CodCliente
+    referenced_table: clientes
+    table: factcabecera
+    type: single_column
+  FK_FactCabecera_OperadorPreV:
+    column: IdUsuarioPreVenta
+    referenced_column: IDOperador
+    referenced_table: operadores
+    table: factcabecera
+    type: single_column
+  FK_FactCabecera_Operadores:
+    column: IDUsuario
+    referenced_column: IDOperador
+    referenced_table: operadores
+    table: factcabecera
+    type: single_column
+  FK_FactCoberturas_FactLineas:
+    columns: &id003
+    - IDComprobante
+    - Orden
+    referenced_columns: &id004
+    - IDComprobante
+    - Orden
+    referenced_table: factlineas
+    table: factcoberturas
+    type: composite
+  FK_FactLineas_FactCabecera:
+    column: IDComprobante
+    referenced_column: IDComprobante
+    referenced_table: factcabecera
+    table: factlineas
+    type: single_column
+  FK_FactPagos_FactCabecera:
+    column: IDComprobante
+    referenced_column: IDComprobante
+    referenced_table: factcabecera
+    table: factpagos
+    type: single_column
+  FK_FactPagos_Tarjetas:
+    column: IDTarjeta
+    referenced_column: IDTarjeta
+    referenced_table: tarjetas
+    table: factpagos
+    type: single_column
+  FK_Formas:
+    column: IDForma
+    referenced_column: IDForma
+    referenced_table: formas
+    table: medicamentos
+    type: single_column
+  FK_Grupos:
+    column: IDGrupo
+    referenced_column: IDGrupo
+    referenced_table: grupos
+    table: clientes
+    type: single_column
+  FK_IdProductoST:
+    column: IDProducto
+    referenced_column: CodPlex
+    referenced_table: medicamentos
+    table: stock
+    type: single_column
+  FK_Laboratorios:
+    column: CodLab
+    referenced_column: CodLab
+    referenced_table: laboratorios
+    table: medicamentos
+    type: single_column
+  FK_ObrasSoc:
+    column: CodObSoc
+    referenced_column: CodObSoc
+    referenced_table: obsociales
+    table: planes
+    type: single_column
+  FK_PedidosLineas_Pedidos:
+    column: IDPedido
+    referenced_column: IDPedido
+    referenced_table: pedidos
+    table: pedidoslineas
+    type: single_column
+  FK_PedidosLineas_PedidosLineasEstados:
+    column: IDEstadoLinea
+    referenced_column: IDEstadoLinea
+    referenced_table: pedidoslineasestados
+    table: pedidoslineas
+    type: single_column
+  FK_PedidosLineas_Productos:
+    column: IDProducto
+    referenced_column: CodPlex
+    referenced_table: medicamentos
+    table: pedidoslineas
+    type: single_column
+  FK_PedidosLineas_Proveedores:
+    column: IDProveedor
+    referenced_column: CodProve
+    referenced_table: proveedores
+    table: pedidoslineas
+    type: single_column
+  FK_Pedidos_PedidosEstados:
+    column: IDEstado
+    referenced_column: IDEstado
+    referenced_table: pedidosestados
+    table: pedidos
+    type: single_column
+  FK_Perfumerias:
+    column: IDPerfumeria
+    referenced_column: IDPerfumeria
+    referenced_table: perfumerias
+    table: medicamentos
+    type: single_column
+  FK_Planes_Comportamientos:
+    column: IDComportamiento
+    referenced_column: CodComport
+    referenced_table: comportamientos
+    table: planes
+    type: single_column
+  FK_Proveedores:
+    column: idProveedor
+    referenced_column: CodProve
+    referenced_table: proveedores
+    table: medicamentos
+    type: single_column
+  FK_Provincias:
+    column: idProvincia
+    referenced_column: idProvincia
+    referenced_table: provincias
+    table: ciudades
+    type: single_column
+  FK_Psicofarmacos:
+    column: IDPsicofarmaco
+    referenced_column: IDPsicofarmaco
+    referenced_table: psicofarmacos
+    table: medicamentos
+    type: single_column
+  FK_RecCabecera_FactCabecera:
+    column: IDComprobante
+    referenced_column: IDComprobante
+    referenced_table: factcabecera
+    table: reccabecera
+    type: single_column
+  FK_RecCabecera_ObrasSociales:
+    columns: &id008
+    - IDObSoc
+    - IDPlan
+    referenced_columns: &id007
+    - CodObSoc
+    - CodPlan
+    referenced_table: planes
+    table: reccabecera
+    type: composite
+  FK_RecLineas_RecCabecera:
+    column: IDReceta
+    referenced_column: IDReceta
+    referenced_table: reccabecera
+    table: reclineas
+    type: single_column
+  FK_Rubr:
+    column: IDRubro
+    referenced_column: CodRubro
+    referenced_table: rubros
+    table: subrubros
+    type: single_column
+  FK_Rubros:
+    column: CodRubro
+    referenced_column: CodRubro
+    referenced_table: rubros
+    table: medicamentos
+    type: single_column
+  FK_SubRubros:
+    column: IDSubRubro
+    referenced_column: IDSubRubro
+    referenced_table: subrubros
+    table: medicamentos
+    type: single_column
+  FK_Tamanos:
+    column: CodTamano
+    referenced_column: IDTamano
+    referenced_table: tamanos
+    table: medicamentos
+    type: single_column
+  FK_TiposConcentracion:
+    column: IDTipoConc
+    referenced_column: IDTipoConc
+    referenced_table: tiposconcentracion
+    table: medicamentos
+    type: single_column
+  FK_TiposIVA:
+    column: idTipoIVA
+    referenced_column: idTipoIva
+    referenced_table: tiposiva
+    table: medicamentos
+    type: single_column
+  FK_TiposUnidades:
+    column: IDTipoUnidad
+    referenced_column: IDTipoUnidad
+    referenced_table: tiposunidades
+    table: medicamentos
+    type: single_column
+  FK_TiposVenta:
+    column: idTipoVenta
+    referenced_column: idTipoVenta
+    referenced_table: tiposventa
+    table: medicamentos
+    type: single_column
+  apppedidos_ibfk_1:
+    column: IdEstado
+    referenced_column: IdEstado
+    referenced_table: apppedidosestados
+    table: apppedidos
+    type: single_column
+  apppedidos_ibfk_2:
+    column: IDOrigen
+    referenced_column: IDOrigen
+    referenced_table: apppedidosorigenes
+    table: apppedidos
+    type: single_column
+  apppedidos_ibfk_3:
+    column: IDRed
+    referenced_column: IDRed
+    referenced_table: apppedidosredes
+    table: apppedidos
+    type: single_column
+  apppedidoslineas_ibfk_1:
+    column: IDPedido
+    referenced_column: IDPedido
+    referenced_table: apppedidos
+    table: apppedidoslineas
+    type: single_column
+  apppedidoslineas_ibfk_2:
+    column: IdProducto
+    referenced_column: CodPlex
+    referenced_table: medicamentos
+    table: apppedidoslineas
+    type: single_column
+  apppedidoslineasfact_ibfk_1:
+    column: IdProducto
+    referenced_column: CodPlex
+    referenced_table: medicamentos
+    table: apppedidoslineasfact
+    type: single_column
+  apppedidoslineasfact_ibfk_2:
+    column: IDPedido
+    referenced_column: IDPedido
+    referenced_table: apppedidos
+    table: apppedidoslineasfact
+    type: single_column
+  apppedidosmovimientos_ibfk_1:
+    column: IdEstado
+    referenced_column: IdEstado
+    referenced_table: apppedidosestados
+    table: apppedidosmovimientos
+    type: single_column
+  apppedidosmovimientos_ibfk_3:
+    column: IdUsuario
+    referenced_column: IDOperador
+    referenced_table: operadores
+    table: apppedidosmovimientos
+    type: single_column
+  apppedidosmovimientos_ibfk_4:
+    column: IDPedido
+    referenced_column: IDPedido
+    referenced_table: apppedidos
+    table: apppedidosmovimientos
+    type: single_column
+  apppedidospagos_ibfk_1:
+    column: IDPedido
+    referenced_column: IDPedido
+    referenced_table: apppedidos
+    table: apppedidospagos
+    type: single_column
+  asientos_detalle_ibfk_1:
+    column: IdAsiento
+    referenced_column: IdAsiento
+    referenced_table: asientos
+    table: asientos_detalle
+    type: single_column
+  asientos_detalle_ibfk_2:
+    column: IDCuenta
+    referenced_column: idcuenta
+    referenced_table: cuentascontables
+    table: asientos_detalle
+    type: single_column
+  asientos_ibfk_1:
+    column: IdEstadoAsiento
+    referenced_column: IdEstadoAsiento
+    referenced_table: asientos_estados
+    table: asientos
+    type: single_column
+  asientos_ibfk_2:
+    column: IdProcesoAsiento
+    referenced_column: IdProcesoAsiento
+    referenced_table: asientos_procesos
+    table: asientos
+    type: single_column
+  categories_ibfk_1:
+    column: IdCategoryType
+    referenced_column: IdCategoryType
+    referenced_table: categorytypes
+    table: categories
+    type: single_column
+  categories_ibfk_2:
+    column: IdParentCategory
+    referenced_column: IdCategory
+    referenced_table: categories
+    table: categories
+    type: single_column
+  categorizedproducts_ibfk_1:
+    column: IdCategory
+    referenced_column: IdCategory
+    referenced_table: categories
+    table: categorizedproducts
+    type: single_column
+  categorizedproducts_ibfk_2:
+    column: IDProducto
+    referenced_column: CodPlex
+    referenced_table: medicamentos
+    table: categorizedproducts
+    type: single_column
+  clientes_ibfk_1:
+    columns: &id001
+    - IDObSoc
+    - IDPlan
+    referenced_columns: &id002
+    - CodObSoc
+    - CodPlan
+    referenced_table: planes
+    table: clientes
+    type: composite
+  clientes_ibfk_2:
+    column: IdCiclo
+    referenced_column: IdCiclo
+    referenced_table: tp_ciclos
+    table: clientes
+    type: single_column
+  comprascabecera_ibfk_1:
+    column: IDProveedor
+    referenced_column: CodProve
+    referenced_table: proveedores
+    table: comprascabecera
+    type: single_column
+  comprascabecera_ibfk_2:
+    column: IDTipoGasto
+    referenced_column: CodMovim
+    referenced_table: gastos
+    table: comprascabecera
+    type: single_column
+  comprascabecera_ibfk_3:
+    column: Empresa
+    referenced_column: Empresa
+    referenced_table: empresas
+    table: comprascabecera
+    type: single_column
+  comprascabecera_ibfk_4:
+    column: IDResumen
+    referenced_column: IDResumen
+    referenced_table: comprasresumenes
+    table: comprascabecera
+    type: single_column
+  comprasdetalle_ibfk_1:
+    column: AFIP_IDOperacion
+    referenced_column: IDOperacion
+    referenced_table: afip_operacionescompra
+    table: comprasdetalle
+    type: single_column
+  comprasdetalle_ibfk_2:
+    column: IDTipoGasto
+    referenced_column: CodMovim
+    referenced_table: gastos
+    table: comprasdetalle
+    type: single_column
+  cuentascontables_ibfk_1:
+    column: idTipoCuenta
+    referenced_column: idTipoCuenta
+    referenced_table: cuentascontables_tipos
+    table: cuentascontables
+    type: single_column
+  cuentascontables_ibfk_2:
+    column: idTipoEntidad
+    referenced_column: idTipoEntidad
+    referenced_table: cuentascontables_tipoentidades
+    table: cuentascontables
+    type: single_column
+  factlineas_ibfk_1:
+    column: IDActividad
+    referenced_column: IDActividad
+    referenced_table: afip_actividadesventa
+    table: factlineas
+    type: single_column
+  factlineasptesentrega_ibfk_1:
+    columns: &id006
+    - IDComprobante
+    - Orden
+    referenced_columns: &id005
+    - IDComprobante
+    - Orden
+    referenced_table: factlineas
+    table: factlineasptesentrega
+    type: composite
+  factpagos_fk_IdTransacPago:
+    column: IdTransacPago
+    referenced_column: IdTransacPago
+    referenced_table: pagostransacciones
+    table: factpagos
+    type: single_column
+  factpagos_ibfk_1:
+    column: IdMedioDePago
+    referenced_column: IdMedioDePago
+    referenced_table: mediosdepago
+    table: factpagos
+    type: single_column
+  factpagos_ibfk_2:
+    column: IdMovTarjeta
+    referenced_column: IdMovTarjeta
+    referenced_table: tarjetasmovimientos
+    table: factpagos
+    type: single_column
+  factpagos_ibfk_3:
+    column: IDCheque
+    referenced_column: IdCheque
+    referenced_table: cheques
+    table: factpagos
+    type: single_column
+  factpagos_ibfk_4:
+    column: IdCobroMP
+    referenced_column: IdCobroMPGlobal
+    referenced_table: mercadopagos
+    table: factpagos
+    type: single_column
+  factpagos_ibfk_5:
+    column: idTransferencia
+    referenced_column: IdTransferencia
+    referenced_table: transferencias
+    table: factpagos
+    type: single_column
+  factreglasaplicadas_ibfk_1:
+    column: IDRegCom
+    referenced_column: IDRegCom
+    referenced_table: reglascomerciales
+    table: factreglasaplicadas
+    type: single_column
+  gastos_ibfk_1:
+    column: IDOperacion
+    referenced_column: IDOperacion
+    referenced_table: afip_operacionescompra
+    table: gastos
+    type: single_column
+  gastos_ibfk_2:
+    column: IDTipoCentroCosto
+    referenced_column: IDTipoCentroCosto
+    referenced_table: tiposdecentrosdecostos
+    table: gastos
+    type: single_column
+  medicamentos_ibfk_1:
+    column: IDActividad
+    referenced_column: IDActividad
+    referenced_table: afip_actividadesventa
+    table: medicamentos
+    type: single_column
+  medicamentos_ibfk_2:
+    column: IDClasificador
+    referenced_column: IDClasificador
+    referenced_table: clasificadores
+    table: medicamentos
+    type: single_column
+  operadores_ibfk_1:
+    column: IdPerfil
+    referenced_column: IDPerfil
+    referenced_table: usuariosperfiles
+    table: operadores
+    type: single_column
+  pagosproveedores_ibfk_1:
+    column: IDComprobanteCancelatorio
+    referenced_column: IDComprobante
+    referenced_table: comprascabecera
+    table: pagosproveedores
+    type: single_column
+  pagosproveedores_ibfk_2:
+    column: IDComprobanteCancelado
+    referenced_column: IDComprobante
+    referenced_table: comprascabecera
+    table: pagosproveedores
+    type: single_column
+  reccabecera_ibfk_1:
+    column: IdPresentacion
+    referenced_column: IdPresentacion
+    referenced_table: presentacionesrecetas
+    table: reccabecera
+    type: single_column
+  reccabecera_ibfk_2:
+    column: IDUsuario
+    referenced_column: IDOperador
+    referenced_table: operadores
+    table: reccabecera
+    type: single_column
+  rubros_ibfk_1:
+    column: IDActividad
+    referenced_column: IDActividad
+    referenced_table: afip_actividadesventa
+    table: rubros
+    type: single_column
+  subrubros_ibfk_1:
+    column: IDActividad
+    referenced_column: IDActividad
+    referenced_table: afip_actividadesventa
+    table: subrubros
+    type: single_column
+metadata:
+  database: onze_center
+  generated_at: '2025-08-25T18:57:23.002394'
+  method: INFORMATION_SCHEMA.KEY_COLUMN_USAGE extraction
+  source: mysql_fk_structure.csv
+relationships_by_table:
+  afip_actividadesventa:
+    incoming:
+    - column: IDActividad
+      constraint_name: factlineas_ibfk_1
+      description: afip_actividadesventa is referenced by factlineas
+      relationship_type: one_to_many
+      source_column: IDActividad
+      source_table: factlineas
+    - column: IDActividad
+      constraint_name: medicamentos_ibfk_1
+      description: afip_actividadesventa is referenced by medicamentos
+      relationship_type: one_to_many
+      source_column: IDActividad
+      source_table: medicamentos
+    - column: IDActividad
+      constraint_name: rubros_ibfk_1
+      description: afip_actividadesventa is referenced by rubros
+      relationship_type: one_to_many
+      source_column: IDActividad
+      source_table: rubros
+    - column: IDActividad
+      constraint_name: subrubros_ibfk_1
+      description: afip_actividadesventa is referenced by subrubros
+      relationship_type: one_to_many
+      source_column: IDActividad
+      source_table: subrubros
+    outgoing: []
+  afip_operacionescompra:
+    incoming:
+    - column: IDOperacion
+      constraint_name: comprasdetalle_ibfk_1
+      description: afip_operacionescompra is referenced by comprasdetalle
+      relationship_type: one_to_many
+      source_column: AFIP_IDOperacion
+      source_table: comprasdetalle
+    - column: IDOperacion
+      constraint_name: gastos_ibfk_1
+      description: afip_operacionescompra is referenced by gastos
+      relationship_type: one_to_many
+      source_column: IDOperacion
+      source_table: gastos
+    outgoing: []
+  apppedidos:
+    incoming:
+    - column: IDPedido
+      constraint_name: apppedidoslineas_ibfk_1
+      description: apppedidos is referenced by apppedidoslineas
+      relationship_type: one_to_many
+      source_column: IDPedido
+      source_table: apppedidoslineas
+    - column: IDPedido
+      constraint_name: apppedidoslineasfact_ibfk_2
+      description: apppedidos is referenced by apppedidoslineasfact
+      relationship_type: one_to_many
+      source_column: IDPedido
+      source_table: apppedidoslineasfact
+    - column: IDPedido
+      constraint_name: apppedidosmovimientos_ibfk_4
+      description: apppedidos is referenced by apppedidosmovimientos
+      relationship_type: one_to_many
+      source_column: IDPedido
+      source_table: apppedidosmovimientos
+    - column: IDPedido
+      constraint_name: apppedidospagos_ibfk_1
+      description: apppedidos is referenced by apppedidospagos
+      relationship_type: one_to_many
+      source_column: IDPedido
+      source_table: apppedidospagos
+    outgoing:
+    - column: IdEstado
+      constraint_name: apppedidos_ibfk_1
+      description: apppedidos references apppedidosestados
+      referenced_column: IdEstado
+      relationship_type: many_to_one
+      target_table: apppedidosestados
+    - column: IDOrigen
+      constraint_name: apppedidos_ibfk_2
+      description: apppedidos references apppedidosorigenes
+      referenced_column: IDOrigen
+      relationship_type: many_to_one
+      target_table: apppedidosorigenes
+    - column: IDRed
+      constraint_name: apppedidos_ibfk_3
+      description: apppedidos references apppedidosredes
+      referenced_column: IDRed
+      relationship_type: many_to_one
+      target_table: apppedidosredes
+  apppedidosestados:
+    incoming:
+    - column: IdEstado
+      constraint_name: apppedidos_ibfk_1
+      description: apppedidosestados is referenced by apppedidos
+      relationship_type: one_to_many
+      source_column: IdEstado
+      source_table: apppedidos
+    - column: IdEstado
+      constraint_name: apppedidosmovimientos_ibfk_1
+      description: apppedidosestados is referenced by apppedidosmovimientos
+      relationship_type: one_to_many
+      source_column: IdEstado
+      source_table: apppedidosmovimientos
+    outgoing: []
+  apppedidoslineas:
+    incoming: []
+    outgoing:
+    - column: IDPedido
+      constraint_name: apppedidoslineas_ibfk_1
+      description: apppedidoslineas references apppedidos
+      referenced_column: IDPedido
+      relationship_type: many_to_one
+      target_table: apppedidos
+    - column: IdProducto
+      constraint_name: apppedidoslineas_ibfk_2
+      description: apppedidoslineas references medicamentos
+      referenced_column: CodPlex
+      relationship_type: many_to_one
+      target_table: medicamentos
+  apppedidoslineasfact:
+    incoming: []
+    outgoing:
+    - column: IDPedido
+      constraint_name: apppedidoslineasfact_ibfk_2
+      description: apppedidoslineasfact references apppedidos
+      referenced_column: IDPedido
+      relationship_type: many_to_one
+      target_table: apppedidos
+    - column: IdProducto
+      constraint_name: apppedidoslineasfact_ibfk_1
+      description: apppedidoslineasfact references medicamentos
+      referenced_column: CodPlex
+      relationship_type: many_to_one
+      target_table: medicamentos
+  apppedidosmovimientos:
+    incoming: []
+    outgoing:
+    - column: IdEstado
+      constraint_name: apppedidosmovimientos_ibfk_1
+      description: apppedidosmovimientos references apppedidosestados
+      referenced_column: IdEstado
+      relationship_type: many_to_one
+      target_table: apppedidosestados
+    - column: IDPedido
+      constraint_name: apppedidosmovimientos_ibfk_4
+      description: apppedidosmovimientos references apppedidos
+      referenced_column: IDPedido
+      relationship_type: many_to_one
+      target_table: apppedidos
+    - column: IdUsuario
+      constraint_name: apppedidosmovimientos_ibfk_3
+      description: apppedidosmovimientos references operadores
+      referenced_column: IDOperador
+      relationship_type: many_to_one
+      target_table: operadores
+  apppedidosorigenes:
+    incoming:
+    - column: IDOrigen
+      constraint_name: apppedidos_ibfk_2
+      description: apppedidosorigenes is referenced by apppedidos
+      relationship_type: one_to_many
+      source_column: IDOrigen
+      source_table: apppedidos
+    outgoing: []
+  apppedidospagos:
+    incoming: []
+    outgoing:
+    - column: IDPedido
+      constraint_name: apppedidospagos_ibfk_1
+      description: apppedidospagos references apppedidos
+      referenced_column: IDPedido
+      relationship_type: many_to_one
+      target_table: apppedidos
+  apppedidosredes:
+    incoming:
+    - column: IDRed
+      constraint_name: apppedidos_ibfk_3
+      description: apppedidosredes is referenced by apppedidos
+      relationship_type: one_to_many
+      source_column: IDRed
+      source_table: apppedidos
+    outgoing: []
+  asientos:
+    incoming:
+    - column: IdAsiento
+      constraint_name: asientos_detalle_ibfk_1
+      description: asientos is referenced by asientos_detalle
+      relationship_type: one_to_many
+      source_column: IdAsiento
+      source_table: asientos_detalle
+    outgoing:
+    - column: IdEstadoAsiento
+      constraint_name: asientos_ibfk_1
+      description: asientos references asientos_estados
+      referenced_column: IdEstadoAsiento
+      relationship_type: many_to_one
+      target_table: asientos_estados
+    - column: IdProcesoAsiento
+      constraint_name: asientos_ibfk_2
+      description: asientos references asientos_procesos
+      referenced_column: IdProcesoAsiento
+      relationship_type: many_to_one
+      target_table: asientos_procesos
+  asientos_detalle:
+    incoming: []
+    outgoing:
+    - column: IdAsiento
+      constraint_name: asientos_detalle_ibfk_1
+      description: asientos_detalle references asientos
+      referenced_column: IdAsiento
+      relationship_type: many_to_one
+      target_table: asientos
+    - column: IDCuenta
+      constraint_name: asientos_detalle_ibfk_2
+      description: asientos_detalle references cuentascontables
+      referenced_column: idcuenta
+      relationship_type: many_to_one
+      target_table: cuentascontables
+  asientos_estados:
+    incoming:
+    - column: IdEstadoAsiento
+      constraint_name: asientos_ibfk_1
+      description: asientos_estados is referenced by asientos
+      relationship_type: one_to_many
+      source_column: IdEstadoAsiento
+      source_table: asientos
+    outgoing: []
+  asientos_procesos:
+    incoming:
+    - column: IdProcesoAsiento
+      constraint_name: asientos_ibfk_2
+      description: asientos_procesos is referenced by asientos
+      relationship_type: one_to_many
+      source_column: IdProcesoAsiento
+      source_table: asientos
+    outgoing: []
+  categories:
+    incoming:
+    - column: IdCategory
+      constraint_name: categories_ibfk_2
+      description: categories is referenced by categories
+      relationship_type: one_to_many
+      source_column: IdParentCategory
+      source_table: categories
+    - column: IdCategory
+      constraint_name: categorizedproducts_ibfk_1
+      description: categories is referenced by categorizedproducts
+      relationship_type: one_to_many
+      source_column: IdCategory
+      source_table: categorizedproducts
+    outgoing:
+    - column: IdCategoryType
+      constraint_name: categories_ibfk_1
+      description: categories references categorytypes
+      referenced_column: IdCategoryType
+      relationship_type: many_to_one
+      target_table: categorytypes
+    - column: IdParentCategory
+      constraint_name: categories_ibfk_2
+      description: categories references categories
+      referenced_column: IdCategory
+      relationship_type: many_to_one
+      target_table: categories
+  categorizedproducts:
+    incoming: []
+    outgoing:
+    - column: IdCategory
+      constraint_name: categorizedproducts_ibfk_1
+      description: categorizedproducts references categories
+      referenced_column: IdCategory
+      relationship_type: many_to_one
+      target_table: categories
+    - column: IDProducto
+      constraint_name: categorizedproducts_ibfk_2
+      description: categorizedproducts references medicamentos
+      referenced_column: CodPlex
+      relationship_type: many_to_one
+      target_table: medicamentos
+  categorytypes:
+    incoming:
+    - column: IdCategoryType
+      constraint_name: categories_ibfk_1
+      description: categorytypes is referenced by categories
+      relationship_type: one_to_many
+      source_column: IdCategoryType
+      source_table: categories
+    outgoing: []
+  cheques:
+    incoming:
+    - column: IdCheque
+      constraint_name: factpagos_ibfk_3
+      description: cheques is referenced by factpagos
+      relationship_type: one_to_many
+      source_column: IDCheque
+      source_table: factpagos
+    outgoing: []
+  ciudades:
+    incoming:
+    - column: idCiudad
+      constraint_name: FK_Ciudades
+      description: ciudades is referenced by clientes
+      relationship_type: one_to_many
+      source_column: IDCiudad
+      source_table: clientes
+    - column: idCiudad
+      constraint_name: FK_Ciudades_lab
+      description: ciudades is referenced by laboratorios
+      relationship_type: one_to_many
+      source_column: IDCiudad
+      source_table: laboratorios
+    - column: idCiudad
+      constraint_name: FK_Ciudades_obs
+      description: ciudades is referenced by obsociales
+      relationship_type: one_to_many
+      source_column: idCiudad
+      source_table: obsociales
+    - column: idCiudad
+      constraint_name: FK_Ciudades_pro
+      description: ciudades is referenced by proveedores
+      relationship_type: one_to_many
+      source_column: IDCiudad
+      source_table: proveedores
+    outgoing:
+    - column: idProvincia
+      constraint_name: FK_Provincias
+      description: ciudades references provincias
+      referenced_column: idProvincia
+      relationship_type: many_to_one
+      target_table: provincias
+  clasificadores:
+    incoming:
+    - column: IDClasificador
+      constraint_name: medicamentos_ibfk_2
+      description: clasificadores is referenced by medicamentos
+      relationship_type: one_to_many
+      source_column: IDClasificador
+      source_table: medicamentos
+    outgoing: []
+  clientes:
+    incoming:
+    - column: CodCliente
+      constraint_name: FK_FactCabecera_Clientes
+      description: clientes is referenced by factcabecera
+      relationship_type: one_to_many
+      source_column: IDCliente
+      source_table: factcabecera
+    outgoing:
+    - column: IdCiclo
+      constraint_name: clientes_ibfk_2
+      description: clientes references tp_ciclos
+      referenced_column: IdCiclo
+      relationship_type: many_to_one
+      target_table: tp_ciclos
+    - column: IDCiudad
+      constraint_name: FK_Ciudades
+      description: clientes references ciudades
+      referenced_column: idCiudad
+      relationship_type: many_to_one
+      target_table: ciudades
+    - column: IDGrupo
+      constraint_name: FK_Grupos
+      description: clientes references grupos
+      referenced_column: IDGrupo
+      relationship_type: many_to_one
+      target_table: grupos
+    - columns: *id001
+      constraint_name: clientes_ibfk_1
+      description: clientes references planes
+      referenced_columns: *id002
+      relationship_type: many_to_one
+      target_table: planes
+  comportamientos:
+    incoming:
+    - column: CodComport
+      constraint_name: FK_Planes_Comportamientos
+      description: comportamientos is referenced by planes
+      relationship_type: one_to_many
+      source_column: IDComportamiento
+      source_table: planes
+    outgoing: []
+  comprascabecera:
+    incoming:
+    - column: IDComprobante
+      constraint_name: pagosproveedores_ibfk_2
+      description: comprascabecera is referenced by pagosproveedores
+      relationship_type: one_to_many
+      source_column: IDComprobanteCancelado
+      source_table: pagosproveedores
+    - column: IDComprobante
+      constraint_name: pagosproveedores_ibfk_1
+      description: comprascabecera is referenced by pagosproveedores
+      relationship_type: one_to_many
+      source_column: IDComprobanteCancelatorio
+      source_table: pagosproveedores
+    outgoing:
+    - column: Empresa
+      constraint_name: comprascabecera_ibfk_3
+      description: comprascabecera references empresas
+      referenced_column: Empresa
+      relationship_type: many_to_one
+      target_table: empresas
+    - column: IDProveedor
+      constraint_name: comprascabecera_ibfk_1
+      description: comprascabecera references proveedores
+      referenced_column: CodProve
+      relationship_type: many_to_one
+      target_table: proveedores
+    - column: IDResumen
+      constraint_name: comprascabecera_ibfk_4
+      description: comprascabecera references comprasresumenes
+      referenced_column: IDResumen
+      relationship_type: many_to_one
+      target_table: comprasresumenes
+    - column: IDTipoGasto
+      constraint_name: comprascabecera_ibfk_2
+      description: comprascabecera references gastos
+      referenced_column: CodMovim
+      relationship_type: many_to_one
+      target_table: gastos
+  comprasdetalle:
+    incoming: []
+    outgoing:
+    - column: AFIP_IDOperacion
+      constraint_name: comprasdetalle_ibfk_1
+      description: comprasdetalle references afip_operacionescompra
+      referenced_column: IDOperacion
+      relationship_type: many_to_one
+      target_table: afip_operacionescompra
+    - column: IDTipoGasto
+      constraint_name: comprasdetalle_ibfk_2
+      description: comprasdetalle references gastos
+      referenced_column: CodMovim
+      relationship_type: many_to_one
+      target_table: gastos
+  comprasresumenes:
+    incoming:
+    - column: IDResumen
+      constraint_name: comprascabecera_ibfk_4
+      description: comprasresumenes is referenced by comprascabecera
+      relationship_type: one_to_many
+      source_column: IDResumen
+      source_table: comprascabecera
+    outgoing: []
+  cuentascontables:
+    incoming:
+    - column: idcuenta
+      constraint_name: asientos_detalle_ibfk_2
+      description: cuentascontables is referenced by asientos_detalle
+      relationship_type: one_to_many
+      source_column: IDCuenta
+      source_table: asientos_detalle
+    outgoing:
+    - column: idTipoCuenta
+      constraint_name: cuentascontables_ibfk_1
+      description: cuentascontables references cuentascontables_tipos
+      referenced_column: idTipoCuenta
+      relationship_type: many_to_one
+      target_table: cuentascontables_tipos
+    - column: idTipoEntidad
+      constraint_name: cuentascontables_ibfk_2
+      description: cuentascontables references cuentascontables_tipoentidades
+      referenced_column: idTipoEntidad
+      relationship_type: many_to_one
+      target_table: cuentascontables_tipoentidades
+  cuentascontables_tipoentidades:
+    incoming:
+    - column: idTipoEntidad
+      constraint_name: cuentascontables_ibfk_2
+      description: cuentascontables_tipoentidades is referenced by cuentascontables
+      relationship_type: one_to_many
+      source_column: idTipoEntidad
+      source_table: cuentascontables
+    outgoing: []
+  cuentascontables_tipos:
+    incoming:
+    - column: idTipoCuenta
+      constraint_name: cuentascontables_ibfk_1
+      description: cuentascontables_tipos is referenced by cuentascontables
+      relationship_type: one_to_many
+      source_column: idTipoCuenta
+      source_table: cuentascontables
+    outgoing: []
+  empresas:
+    incoming:
+    - column: Empresa
+      constraint_name: comprascabecera_ibfk_3
+      description: empresas is referenced by comprascabecera
+      relationship_type: one_to_many
+      source_column: Empresa
+      source_table: comprascabecera
+    outgoing: []
+  factcabecera:
+    incoming:
+    - column: IDComprobante
+      constraint_name: FK_FactLineas_FactCabecera
+      description: factcabecera is referenced by factlineas
+      relationship_type: one_to_many
+      source_column: IDComprobante
+      source_table: factlineas
+    - column: IDComprobante
+      constraint_name: FK_FactPagos_FactCabecera
+      description: factcabecera is referenced by factpagos
+      relationship_type: one_to_many
+      source_column: IDComprobante
+      source_table: factpagos
+    - column: IDComprobante
+      constraint_name: FK_RecCabecera_FactCabecera
+      description: factcabecera is referenced by reccabecera
+      relationship_type: one_to_many
+      source_column: IDComprobante
+      source_table: reccabecera
+    outgoing:
+    - column: IDCliente
+      constraint_name: FK_FactCabecera_Clientes
+      description: factcabecera references clientes
+      referenced_column: CodCliente
+      relationship_type: many_to_one
+      target_table: clientes
+    - column: IDUsuario
+      constraint_name: FK_FactCabecera_Operadores
+      description: factcabecera references operadores
+      referenced_column: IDOperador
+      relationship_type: many_to_one
+      target_table: operadores
+    - column: IdUsuarioPreVenta
+      constraint_name: FK_FactCabecera_OperadorPreV
+      description: factcabecera references operadores
+      referenced_column: IDOperador
+      relationship_type: many_to_one
+      target_table: operadores
+  factcoberturas:
+    incoming: []
+    outgoing:
+    - columns: *id003
+      constraint_name: FK_FactCoberturas_FactLineas
+      description: factcoberturas references factlineas
+      referenced_columns: *id004
+      relationship_type: many_to_one
+      target_table: factlineas
+  factlineas:
+    incoming:
+    - columns: *id004
+      constraint_name: FK_FactCoberturas_FactLineas
+      description: factlineas is referenced by factcoberturas
+      relationship_type: one_to_many
+      source_columns: *id003
+      source_table: factcoberturas
+    - columns: *id005
+      constraint_name: factlineasptesentrega_ibfk_1
+      description: factlineas is referenced by factlineasptesentrega
+      relationship_type: one_to_many
+      source_columns: *id006
+      source_table: factlineasptesentrega
+    outgoing:
+    - column: IDActividad
+      constraint_name: factlineas_ibfk_1
+      description: factlineas references afip_actividadesventa
+      referenced_column: IDActividad
+      relationship_type: many_to_one
+      target_table: afip_actividadesventa
+    - column: IDComprobante
+      constraint_name: FK_FactLineas_FactCabecera
+      description: factlineas references factcabecera
+      referenced_column: IDComprobante
+      relationship_type: many_to_one
+      target_table: factcabecera
+  factlineasptesentrega:
+    incoming: []
+    outgoing:
+    - columns: *id006
+      constraint_name: factlineasptesentrega_ibfk_1
+      description: factlineasptesentrega references factlineas
+      referenced_columns: *id005
+      relationship_type: many_to_one
+      target_table: factlineas
+  factpagos:
+    incoming: []
+    outgoing:
+    - column: IDCheque
+      constraint_name: factpagos_ibfk_3
+      description: factpagos references cheques
+      referenced_column: IdCheque
+      relationship_type: many_to_one
+      target_table: cheques
+    - column: IdCobroMP
+      constraint_name: factpagos_ibfk_4
+      description: factpagos references mercadopagos
+      referenced_column: IdCobroMPGlobal
+      relationship_type: many_to_one
+      target_table: mercadopagos
+    - column: IDComprobante
+      constraint_name: FK_FactPagos_FactCabecera
+      description: factpagos references factcabecera
+      referenced_column: IDComprobante
+      relationship_type: many_to_one
+      target_table: factcabecera
+    - column: IdMedioDePago
+      constraint_name: factpagos_ibfk_1
+      description: factpagos references mediosdepago
+      referenced_column: IdMedioDePago
+      relationship_type: many_to_one
+      target_table: mediosdepago
+    - column: IdMovTarjeta
+      constraint_name: factpagos_ibfk_2
+      description: factpagos references tarjetasmovimientos
+      referenced_column: IdMovTarjeta
+      relationship_type: many_to_one
+      target_table: tarjetasmovimientos
+    - column: IDTarjeta
+      constraint_name: FK_FactPagos_Tarjetas
+      description: factpagos references tarjetas
+      referenced_column: IDTarjeta
+      relationship_type: many_to_one
+      target_table: tarjetas
+    - column: IdTransacPago
+      constraint_name: factpagos_fk_IdTransacPago
+      description: factpagos references pagostransacciones
+      referenced_column: IdTransacPago
+      relationship_type: many_to_one
+      target_table: pagostransacciones
+    - column: idTransferencia
+      constraint_name: factpagos_ibfk_5
+      description: factpagos references transferencias
+      referenced_column: IdTransferencia
+      relationship_type: many_to_one
+      target_table: transferencias
+  factreglasaplicadas:
+    incoming: []
+    outgoing:
+    - column: IDRegCom
+      constraint_name: factreglasaplicadas_ibfk_1
+      description: factreglasaplicadas references reglascomerciales
+      referenced_column: IDRegCom
+      relationship_type: many_to_one
+      target_table: reglascomerciales
+  formas:
+    incoming:
+    - column: IDForma
+      constraint_name: FK_Formas
+      description: formas is referenced by medicamentos
+      relationship_type: one_to_many
+      source_column: IDForma
+      source_table: medicamentos
+    outgoing: []
+  gastos:
+    incoming:
+    - column: CodMovim
+      constraint_name: comprascabecera_ibfk_2
+      description: gastos is referenced by comprascabecera
+      relationship_type: one_to_many
+      source_column: IDTipoGasto
+      source_table: comprascabecera
+    - column: CodMovim
+      constraint_name: comprasdetalle_ibfk_2
+      description: gastos is referenced by comprasdetalle
+      relationship_type: one_to_many
+      source_column: IDTipoGasto
+      source_table: comprasdetalle
+    outgoing:
+    - column: IDOperacion
+      constraint_name: gastos_ibfk_1
+      description: gastos references afip_operacionescompra
+      referenced_column: IDOperacion
+      relationship_type: many_to_one
+      target_table: afip_operacionescompra
+    - column: IDTipoCentroCosto
+      constraint_name: gastos_ibfk_2
+      description: gastos references tiposdecentrosdecostos
+      referenced_column: IDTipoCentroCosto
+      relationship_type: many_to_one
+      target_table: tiposdecentrosdecostos
+  grupos:
+    incoming:
+    - column: IDGrupo
+      constraint_name: FK_Grupos
+      description: grupos is referenced by clientes
+      relationship_type: one_to_many
+      source_column: IDGrupo
+      source_table: clientes
+    outgoing: []
+  laboratorios:
+    incoming:
+    - column: CodLab
+      constraint_name: FK_Laboratorios
+      description: laboratorios is referenced by medicamentos
+      relationship_type: one_to_many
+      source_column: CodLab
+      source_table: medicamentos
+    outgoing:
+    - column: IDCiudad
+      constraint_name: FK_Ciudades_lab
+      description: laboratorios references ciudades
+      referenced_column: idCiudad
+      relationship_type: many_to_one
+      target_table: ciudades
+  medicamentos:
+    incoming:
+    - column: CodPlex
+      constraint_name: apppedidoslineas_ibfk_2
+      description: medicamentos is referenced by apppedidoslineas
+      relationship_type: one_to_many
+      source_column: IdProducto
+      source_table: apppedidoslineas
+    - column: CodPlex
+      constraint_name: apppedidoslineasfact_ibfk_1
+      description: medicamentos is referenced by apppedidoslineasfact
+      relationship_type: one_to_many
+      source_column: IdProducto
+      source_table: apppedidoslineasfact
+    - column: CodPlex
+      constraint_name: categorizedproducts_ibfk_2
+      description: medicamentos is referenced by categorizedproducts
+      relationship_type: one_to_many
+      source_column: IDProducto
+      source_table: categorizedproducts
+    - column: CodPlex
+      constraint_name: FK_PedidosLineas_Productos
+      description: medicamentos is referenced by pedidoslineas
+      relationship_type: one_to_many
+      source_column: IDProducto
+      source_table: pedidoslineas
+    - column: CodPlex
+      constraint_name: FK_IdProductoST
+      description: medicamentos is referenced by stock
+      relationship_type: one_to_many
+      source_column: IDProducto
+      source_table: stock
+    outgoing:
+    - column: CodLab
+      constraint_name: FK_Laboratorios
+      description: medicamentos references laboratorios
+      referenced_column: CodLab
+      relationship_type: many_to_one
+      target_table: laboratorios
+    - column: CodRubro
+      constraint_name: FK_Rubros
+      description: medicamentos references rubros
+      referenced_column: CodRubro
+      relationship_type: many_to_one
+      target_table: rubros
+    - column: CodTamano
+      constraint_name: FK_Tamanos
+      description: medicamentos references tamanos
+      referenced_column: IDTamano
+      relationship_type: many_to_one
+      target_table: tamanos
+    - column: IDActividad
+      constraint_name: medicamentos_ibfk_1
+      description: medicamentos references afip_actividadesventa
+      referenced_column: IDActividad
+      relationship_type: many_to_one
+      target_table: afip_actividadesventa
+    - column: IDClasificador
+      constraint_name: medicamentos_ibfk_2
+      description: medicamentos references clasificadores
+      referenced_column: IDClasificador
+      relationship_type: many_to_one
+      target_table: clasificadores
+    - column: IDForma
+      constraint_name: FK_Formas
+      description: medicamentos references formas
+      referenced_column: IDForma
+      relationship_type: many_to_one
+      target_table: formas
+    - column: IDPerfumeria
+      constraint_name: FK_Perfumerias
+      description: medicamentos references perfumerias
+      referenced_column: IDPerfumeria
+      relationship_type: many_to_one
+      target_table: perfumerias
+    - column: idProveedor
+      constraint_name: FK_Proveedores
+      description: medicamentos references proveedores
+      referenced_column: CodProve
+      relationship_type: many_to_one
+      target_table: proveedores
+    - column: IDPsicofarmaco
+      constraint_name: FK_Psicofarmacos
+      description: medicamentos references psicofarmacos
+      referenced_column: IDPsicofarmaco
+      relationship_type: many_to_one
+      target_table: psicofarmacos
+    - column: IDSubRubro
+      constraint_name: FK_SubRubros
+      description: medicamentos references subrubros
+      referenced_column: IDSubRubro
+      relationship_type: many_to_one
+      target_table: subrubros
+    - column: IDTipoConc
+      constraint_name: FK_TiposConcentracion
+      description: medicamentos references tiposconcentracion
+      referenced_column: IDTipoConc
+      relationship_type: many_to_one
+      target_table: tiposconcentracion
+    - column: idTipoIVA
+      constraint_name: FK_TiposIVA
+      description: medicamentos references tiposiva
+      referenced_column: idTipoIva
+      relationship_type: many_to_one
+      target_table: tiposiva
+    - column: IDTipoUnidad
+      constraint_name: FK_TiposUnidades
+      description: medicamentos references tiposunidades
+      referenced_column: IDTipoUnidad
+      relationship_type: many_to_one
+      target_table: tiposunidades
+    - column: idTipoVenta
+      constraint_name: FK_TiposVenta
+      description: medicamentos references tiposventa
+      referenced_column: idTipoVenta
+      relationship_type: many_to_one
+      target_table: tiposventa
+  mediosdepago:
+    incoming:
+    - column: IdMedioDePago
+      constraint_name: factpagos_ibfk_1
+      description: mediosdepago is referenced by factpagos
+      relationship_type: one_to_many
+      source_column: IdMedioDePago
+      source_table: factpagos
+    outgoing: []
+  mercadopagos:
+    incoming:
+    - column: IdCobroMPGlobal
+      constraint_name: factpagos_ibfk_4
+      description: mercadopagos is referenced by factpagos
+      relationship_type: one_to_many
+      source_column: IdCobroMP
+      source_table: factpagos
+    outgoing: []
+  obsociales:
+    incoming:
+    - column: CodObSoc
+      constraint_name: FK_ObrasSoc
+      description: obsociales is referenced by planes
+      relationship_type: one_to_many
+      source_column: CodObSoc
+      source_table: planes
+    outgoing:
+    - column: idCiudad
+      constraint_name: FK_Ciudades_obs
+      description: obsociales references ciudades
+      referenced_column: idCiudad
+      relationship_type: many_to_one
+      target_table: ciudades
+  operadores:
+    incoming:
+    - column: IDOperador
+      constraint_name: apppedidosmovimientos_ibfk_3
+      description: operadores is referenced by apppedidosmovimientos
+      relationship_type: one_to_many
+      source_column: IdUsuario
+      source_table: apppedidosmovimientos
+    - column: IDOperador
+      constraint_name: FK_FactCabecera_Operadores
+      description: operadores is referenced by factcabecera
+      relationship_type: one_to_many
+      source_column: IDUsuario
+      source_table: factcabecera
+    - column: IDOperador
+      constraint_name: FK_FactCabecera_OperadorPreV
+      description: operadores is referenced by factcabecera
+      relationship_type: one_to_many
+      source_column: IdUsuarioPreVenta
+      source_table: factcabecera
+    - column: IDOperador
+      constraint_name: reccabecera_ibfk_2
+      description: operadores is referenced by reccabecera
+      relationship_type: one_to_many
+      source_column: IDUsuario
+      source_table: reccabecera
+    outgoing:
+    - column: IdPerfil
+      constraint_name: operadores_ibfk_1
+      description: operadores references usuariosperfiles
+      referenced_column: IDPerfil
+      relationship_type: many_to_one
+      target_table: usuariosperfiles
+  pagosproveedores:
+    incoming: []
+    outgoing:
+    - column: IDComprobanteCancelado
+      constraint_name: pagosproveedores_ibfk_2
+      description: pagosproveedores references comprascabecera
+      referenced_column: IDComprobante
+      relationship_type: many_to_one
+      target_table: comprascabecera
+    - column: IDComprobanteCancelatorio
+      constraint_name: pagosproveedores_ibfk_1
+      description: pagosproveedores references comprascabecera
+      referenced_column: IDComprobante
+      relationship_type: many_to_one
+      target_table: comprascabecera
+  pagostransacciones:
+    incoming:
+    - column: IdTransacPago
+      constraint_name: factpagos_fk_IdTransacPago
+      description: pagostransacciones is referenced by factpagos
+      relationship_type: one_to_many
+      source_column: IdTransacPago
+      source_table: factpagos
+    outgoing: []
+  pedidos:
+    incoming:
+    - column: IDPedido
+      constraint_name: FK_PedidosLineas_Pedidos
+      description: pedidos is referenced by pedidoslineas
+      relationship_type: one_to_many
+      source_column: IDPedido
+      source_table: pedidoslineas
+    outgoing:
+    - column: IDEstado
+      constraint_name: FK_Pedidos_PedidosEstados
+      description: pedidos references pedidosestados
+      referenced_column: IDEstado
+      relationship_type: many_to_one
+      target_table: pedidosestados
+  pedidosestados:
+    incoming:
+    - column: IDEstado
+      constraint_name: FK_Pedidos_PedidosEstados
+      description: pedidosestados is referenced by pedidos
+      relationship_type: one_to_many
+      source_column: IDEstado
+      source_table: pedidos
+    outgoing: []
+  pedidoslineas:
+    incoming: []
+    outgoing:
+    - column: IDEstadoLinea
+      constraint_name: FK_PedidosLineas_PedidosLineasEstados
+      description: pedidoslineas references pedidoslineasestados
+      referenced_column: IDEstadoLinea
+      relationship_type: many_to_one
+      target_table: pedidoslineasestados
+    - column: IDPedido
+      constraint_name: FK_PedidosLineas_Pedidos
+      description: pedidoslineas references pedidos
+      referenced_column: IDPedido
+      relationship_type: many_to_one
+      target_table: pedidos
+    - column: IDProducto
+      constraint_name: FK_PedidosLineas_Productos
+      description: pedidoslineas references medicamentos
+      referenced_column: CodPlex
+      relationship_type: many_to_one
+      target_table: medicamentos
+    - column: IDProveedor
+      constraint_name: FK_PedidosLineas_Proveedores
+      description: pedidoslineas references proveedores
+      referenced_column: CodProve
+      relationship_type: many_to_one
+      target_table: proveedores
+  pedidoslineasestados:
+    incoming:
+    - column: IDEstadoLinea
+      constraint_name: FK_PedidosLineas_PedidosLineasEstados
+      description: pedidoslineasestados is referenced by pedidoslineas
+      relationship_type: one_to_many
+      source_column: IDEstadoLinea
+      source_table: pedidoslineas
+    outgoing: []
+  perfumerias:
+    incoming:
+    - column: IDPerfumeria
+      constraint_name: FK_Perfumerias
+      description: perfumerias is referenced by medicamentos
+      relationship_type: one_to_many
+      source_column: IDPerfumeria
+      source_table: medicamentos
+    outgoing: []
+  planes:
+    incoming:
+    - columns: *id002
+      constraint_name: clientes_ibfk_1
+      description: planes is referenced by clientes
+      relationship_type: one_to_many
+      source_columns: *id001
+      source_table: clientes
+    - columns: *id007
+      constraint_name: FK_RecCabecera_ObrasSociales
+      description: planes is referenced by reccabecera
+      relationship_type: one_to_many
+      source_columns: *id008
+      source_table: reccabecera
+    outgoing:
+    - column: CodObSoc
+      constraint_name: FK_ObrasSoc
+      description: planes references obsociales
+      referenced_column: CodObSoc
+      relationship_type: many_to_one
+      target_table: obsociales
+    - column: IDComportamiento
+      constraint_name: FK_Planes_Comportamientos
+      description: planes references comportamientos
+      referenced_column: CodComport
+      relationship_type: many_to_one
+      target_table: comportamientos
+  presentacionesrecetas:
+    incoming:
+    - column: IdPresentacion
+      constraint_name: reccabecera_ibfk_1
+      description: presentacionesrecetas is referenced by reccabecera
+      relationship_type: one_to_many
+      source_column: IdPresentacion
+      source_table: reccabecera
+    outgoing: []
+  proveedores:
+    incoming:
+    - column: CodProve
+      constraint_name: comprascabecera_ibfk_1
+      description: proveedores is referenced by comprascabecera
+      relationship_type: one_to_many
+      source_column: IDProveedor
+      source_table: comprascabecera
+    - column: CodProve
+      constraint_name: FK_Proveedores
+      description: proveedores is referenced by medicamentos
+      relationship_type: one_to_many
+      source_column: idProveedor
+      source_table: medicamentos
+    - column: CodProve
+      constraint_name: FK_PedidosLineas_Proveedores
+      description: proveedores is referenced by pedidoslineas
+      relationship_type: one_to_many
+      source_column: IDProveedor
+      source_table: pedidoslineas
+    outgoing:
+    - column: IDCiudad
+      constraint_name: FK_Ciudades_pro
+      description: proveedores references ciudades
+      referenced_column: idCiudad
+      relationship_type: many_to_one
+      target_table: ciudades
+  provincias:
+    incoming:
+    - column: idProvincia
+      constraint_name: FK_Provincias
+      description: provincias is referenced by ciudades
+      relationship_type: one_to_many
+      source_column: idProvincia
+      source_table: ciudades
+    outgoing: []
+  psicofarmacos:
+    incoming:
+    - column: IDPsicofarmaco
+      constraint_name: FK_Psicofarmacos
+      description: psicofarmacos is referenced by medicamentos
+      relationship_type: one_to_many
+      source_column: IDPsicofarmaco
+      source_table: medicamentos
+    outgoing: []
+  reccabecera:
+    incoming:
+    - column: IDReceta
+      constraint_name: FK_RecLineas_RecCabecera
+      description: reccabecera is referenced by reclineas
+      relationship_type: one_to_many
+      source_column: IDReceta
+      source_table: reclineas
+    outgoing:
+    - column: IDComprobante
+      constraint_name: FK_RecCabecera_FactCabecera
+      description: reccabecera references factcabecera
+      referenced_column: IDComprobante
+      relationship_type: many_to_one
+      target_table: factcabecera
+    - columns: *id008
+      constraint_name: FK_RecCabecera_ObrasSociales
+      description: reccabecera references planes
+      referenced_columns: *id007
+      relationship_type: many_to_one
+      target_table: planes
+    - column: IdPresentacion
+      constraint_name: reccabecera_ibfk_1
+      description: reccabecera references presentacionesrecetas
+      referenced_column: IdPresentacion
+      relationship_type: many_to_one
+      target_table: presentacionesrecetas
+    - column: IDUsuario
+      constraint_name: reccabecera_ibfk_2
+      description: reccabecera references operadores
+      referenced_column: IDOperador
+      relationship_type: many_to_one
+      target_table: operadores
+  reclineas:
+    incoming: []
+    outgoing:
+    - column: IDReceta
+      constraint_name: FK_RecLineas_RecCabecera
+      description: reclineas references reccabecera
+      referenced_column: IDReceta
+      relationship_type: many_to_one
+      target_table: reccabecera
+  reglascomerciales:
+    incoming:
+    - column: IDRegCom
+      constraint_name: factreglasaplicadas_ibfk_1
+      description: reglascomerciales is referenced by factreglasaplicadas
+      relationship_type: one_to_many
+      source_column: IDRegCom
+      source_table: factreglasaplicadas
+    outgoing: []
+  rubros:
+    incoming:
+    - column: CodRubro
+      constraint_name: FK_Rubros
+      description: rubros is referenced by medicamentos
+      relationship_type: one_to_many
+      source_column: CodRubro
+      source_table: medicamentos
+    - column: CodRubro
+      constraint_name: FK_Rubr
+      description: rubros is referenced by subrubros
+      relationship_type: one_to_many
+      source_column: IDRubro
+      source_table: subrubros
+    outgoing:
+    - column: IDActividad
+      constraint_name: rubros_ibfk_1
+      description: rubros references afip_actividadesventa
+      referenced_column: IDActividad
+      relationship_type: many_to_one
+      target_table: afip_actividadesventa
+  stock:
+    incoming: []
+    outgoing:
+    - column: IDProducto
+      constraint_name: FK_IdProductoST
+      description: stock references medicamentos
+      referenced_column: CodPlex
+      relationship_type: many_to_one
+      target_table: medicamentos
+  subrubros:
+    incoming:
+    - column: IDSubRubro
+      constraint_name: FK_SubRubros
+      description: subrubros is referenced by medicamentos
+      relationship_type: one_to_many
+      source_column: IDSubRubro
+      source_table: medicamentos
+    outgoing:
+    - column: IDActividad
+      constraint_name: subrubros_ibfk_1
+      description: subrubros references afip_actividadesventa
+      referenced_column: IDActividad
+      relationship_type: many_to_one
+      target_table: afip_actividadesventa
+    - column: IDRubro
+      constraint_name: FK_Rubr
+      description: subrubros references rubros
+      referenced_column: CodRubro
+      relationship_type: many_to_one
+      target_table: rubros
+  tamanos:
+    incoming:
+    - column: IDTamano
+      constraint_name: FK_Tamanos
+      description: tamanos is referenced by medicamentos
+      relationship_type: one_to_many
+      source_column: CodTamano
+      source_table: medicamentos
+    outgoing: []
+  tarjetas:
+    incoming:
+    - column: IDTarjeta
+      constraint_name: FK_FactPagos_Tarjetas
+      description: tarjetas is referenced by factpagos
+      relationship_type: one_to_many
+      source_column: IDTarjeta
+      source_table: factpagos
+    outgoing: []
+  tarjetasmovimientos:
+    incoming:
+    - column: IdMovTarjeta
+      constraint_name: factpagos_ibfk_2
+      description: tarjetasmovimientos is referenced by factpagos
+      relationship_type: one_to_many
+      source_column: IdMovTarjeta
+      source_table: factpagos
+    outgoing: []
+  tiposconcentracion:
+    incoming:
+    - column: IDTipoConc
+      constraint_name: FK_TiposConcentracion
+      description: tiposconcentracion is referenced by medicamentos
+      relationship_type: one_to_many
+      source_column: IDTipoConc
+      source_table: medicamentos
+    outgoing: []
+  tiposdecentrosdecostos:
+    incoming:
+    - column: IDTipoCentroCosto
+      constraint_name: gastos_ibfk_2
+      description: tiposdecentrosdecostos is referenced by gastos
+      relationship_type: one_to_many
+      source_column: IDTipoCentroCosto
+      source_table: gastos
+    outgoing: []
+  tiposiva:
+    incoming:
+    - column: idTipoIva
+      constraint_name: FK_TiposIVA
+      description: tiposiva is referenced by medicamentos
+      relationship_type: one_to_many
+      source_column: idTipoIVA
+      source_table: medicamentos
+    outgoing: []
+  tiposunidades:
+    incoming:
+    - column: IDTipoUnidad
+      constraint_name: FK_TiposUnidades
+      description: tiposunidades is referenced by medicamentos
+      relationship_type: one_to_many
+      source_column: IDTipoUnidad
+      source_table: medicamentos
+    outgoing: []
+  tiposventa:
+    incoming:
+    - column: idTipoVenta
+      constraint_name: FK_TiposVenta
+      description: tiposventa is referenced by medicamentos
+      relationship_type: one_to_many
+      source_column: idTipoVenta
+      source_table: medicamentos
+    outgoing: []
+  tp_ciclos:
+    incoming:
+    - column: IdCiclo
+      constraint_name: clientes_ibfk_2
+      description: tp_ciclos is referenced by clientes
+      relationship_type: one_to_many
+      source_column: IdCiclo
+      source_table: clientes
+    outgoing: []
+  transferencias:
+    incoming:
+    - column: IdTransferencia
+      constraint_name: factpagos_ibfk_5
+      description: transferencias is referenced by factpagos
+      relationship_type: one_to_many
+      source_column: idTransferencia
+      source_table: factpagos
+    outgoing: []
+  usuariosperfiles:
+    incoming:
+    - column: IDPerfil
+      constraint_name: operadores_ibfk_1
+      description: usuariosperfiles is referenced by operadores
+      relationship_type: one_to_many
+      source_column: IdPerfil
+      source_table: operadores
+    outgoing: []
+reverse_relationships:
+  afip_actividadesventa.IDActividad:
+  - column: IDActividad
+    constraint: FK_Rubr
+    table: factlineas
+  - column: IDActividad
+    constraint: FK_Rubr
+    table: medicamentos
+  - column: IDActividad
+    constraint: FK_Rubr
+    table: rubros
+  - column: IDActividad
+    constraint: FK_Rubr
+    table: subrubros
+  afip_operacionescompra.IDOperacion:
+  - column: AFIP_IDOperacion
+    constraint: FK_Rubr
+    table: comprasdetalle
+  - column: IDOperacion
+    constraint: FK_Rubr
+    table: gastos
+  apppedidos.IDPedido:
+  - column: IDPedido
+    constraint: FK_Rubr
+    table: apppedidoslineas
+  - column: IDPedido
+    constraint: FK_Rubr
+    table: apppedidoslineasfact
+  - column: IDPedido
+    constraint: FK_Rubr
+    table: apppedidosmovimientos
+  - column: IDPedido
+    constraint: FK_Rubr
+    table: apppedidospagos
+  apppedidosestados.IdEstado:
+  - column: IdEstado
+    constraint: FK_Rubr
+    table: apppedidos
+  - column: IdEstado
+    constraint: FK_Rubr
+    table: apppedidosmovimientos
+  apppedidosorigenes.IDOrigen:
+  - column: IDOrigen
+    constraint: FK_Rubr
+    table: apppedidos
+  apppedidosredes.IDRed:
+  - column: IDRed
+    constraint: FK_Rubr
+    table: apppedidos
+  asientos.IdAsiento:
+  - column: IdAsiento
+    constraint: FK_Rubr
+    table: asientos_detalle
+  asientos_estados.IdEstadoAsiento:
+  - column: IdEstadoAsiento
+    constraint: FK_Rubr
+    table: asientos
+  asientos_procesos.IdProcesoAsiento:
+  - column: IdProcesoAsiento
+    constraint: FK_Rubr
+    table: asientos
+  categories.IdCategory:
+  - column: IdParentCategory
+    constraint: FK_Rubr
+    table: categories
+  - column: IdCategory
+    constraint: FK_Rubr
+    table: categorizedproducts
+  categorytypes.IdCategoryType:
+  - column: IdCategoryType
+    constraint: FK_Rubr
+    table: categories
+  cheques.IdCheque:
+  - column: IDCheque
+    constraint: FK_Rubr
+    table: factpagos
+  ciudades.idCiudad:
+  - column: IDCiudad
+    constraint: FK_Rubr
+    table: clientes
+  - column: IDCiudad
+    constraint: FK_Rubr
+    table: laboratorios
+  - column: idCiudad
+    constraint: FK_Rubr
+    table: obsociales
+  - column: IDCiudad
+    constraint: FK_Rubr
+    table: proveedores
+  clasificadores.IDClasificador:
+  - column: IDClasificador
+    constraint: FK_Rubr
+    table: medicamentos
+  clientes.CodCliente:
+  - column: IDCliente
+    constraint: FK_Rubr
+    table: factcabecera
+  comportamientos.CodComport:
+  - column: IDComportamiento
+    constraint: FK_Rubr
+    table: planes
+  comprascabecera.IDComprobante:
+  - column: IDComprobanteCancelado
+    constraint: FK_Rubr
+    table: pagosproveedores
+  - column: IDComprobanteCancelatorio
+    constraint: FK_Rubr
+    table: pagosproveedores
+  comprasresumenes.IDResumen:
+  - column: IDResumen
+    constraint: FK_Rubr
+    table: comprascabecera
+  cuentascontables.idcuenta:
+  - column: IDCuenta
+    constraint: FK_Rubr
+    table: asientos_detalle
+  cuentascontables_tipoentidades.idTipoEntidad:
+  - column: idTipoEntidad
+    constraint: FK_Rubr
+    table: cuentascontables
+  cuentascontables_tipos.idTipoCuenta:
+  - column: idTipoCuenta
+    constraint: FK_Rubr
+    table: cuentascontables
+  empresas.Empresa:
+  - column: Empresa
+    constraint: FK_Rubr
+    table: comprascabecera
+  factcabecera.IDComprobante:
+  - column: IDComprobante
+    constraint: FK_Rubr
+    table: factlineas
+  - column: IDComprobante
+    constraint: FK_Rubr
+    table: factpagos
+  - column: IDComprobante
+    constraint: FK_Rubr
+    table: reccabecera
+  factlineas.composite:
+  - column: *id003
+    constraint: FK_Rubr
+    table: factcoberturas
+  - column: *id006
+    constraint: FK_Rubr
+    table: factlineasptesentrega
+  formas.IDForma:
+  - column: IDForma
+    constraint: FK_Rubr
+    table: medicamentos
+  gastos.CodMovim:
+  - column: IDTipoGasto
+    constraint: FK_Rubr
+    table: comprascabecera
+  - column: IDTipoGasto
+    constraint: FK_Rubr
+    table: comprasdetalle
+  grupos.IDGrupo:
+  - column: IDGrupo
+    constraint: FK_Rubr
+    table: clientes
+  laboratorios.CodLab:
+  - column: CodLab
+    constraint: FK_Rubr
+    table: medicamentos
+  medicamentos.CodPlex:
+  - column: IdProducto
+    constraint: FK_Rubr
+    table: apppedidoslineas
+  - column: IdProducto
+    constraint: FK_Rubr
+    table: apppedidoslineasfact
+  - column: IDProducto
+    constraint: FK_Rubr
+    table: categorizedproducts
+  - column: IDProducto
+    constraint: FK_Rubr
+    table: pedidoslineas
+  - column: IDProducto
+    constraint: FK_Rubr
+    table: stock
+  mediosdepago.IdMedioDePago:
+  - column: IdMedioDePago
+    constraint: FK_Rubr
+    table: factpagos
+  mercadopagos.IdCobroMPGlobal:
+  - column: IdCobroMP
+    constraint: FK_Rubr
+    table: factpagos
+  obsociales.CodObSoc:
+  - column: CodObSoc
+    constraint: FK_Rubr
+    table: planes
+  operadores.IDOperador:
+  - column: IdUsuario
+    constraint: FK_Rubr
+    table: apppedidosmovimientos
+  - column: IDUsuario
+    constraint: FK_Rubr
+    table: factcabecera
+  - column: IdUsuarioPreVenta
+    constraint: FK_Rubr
+    table: factcabecera
+  - column: IDUsuario
+    constraint: FK_Rubr
+    table: reccabecera
+  pagostransacciones.IdTransacPago:
+  - column: IdTransacPago
+    constraint: FK_Rubr
+    table: factpagos
+  pedidos.IDPedido:
+  - column: IDPedido
+    constraint: FK_Rubr
+    table: pedidoslineas
+  pedidosestados.IDEstado:
+  - column: IDEstado
+    constraint: FK_Rubr
+    table: pedidos
+  pedidoslineasestados.IDEstadoLinea:
+  - column: IDEstadoLinea
+    constraint: FK_Rubr
+    table: pedidoslineas
+  perfumerias.IDPerfumeria:
+  - column: IDPerfumeria
+    constraint: FK_Rubr
+    table: medicamentos
+  planes.composite:
+  - column: *id001
+    constraint: FK_Rubr
+    table: clientes
+  - column: *id008
+    constraint: FK_Rubr
+    table: reccabecera
+  presentacionesrecetas.IdPresentacion:
+  - column: IdPresentacion
+    constraint: FK_Rubr
+    table: reccabecera
+  proveedores.CodProve:
+  - column: IDProveedor
+    constraint: FK_Rubr
+    table: comprascabecera
+  - column: idProveedor
+    constraint: FK_Rubr
+    table: medicamentos
+  - column: IDProveedor
+    constraint: FK_Rubr
+    table: pedidoslineas
+  provincias.idProvincia:
+  - column: idProvincia
+    constraint: FK_Rubr
+    table: ciudades
+  psicofarmacos.IDPsicofarmaco:
+  - column: IDPsicofarmaco
+    constraint: FK_Rubr
+    table: medicamentos
+  reccabecera.IDReceta:
+  - column: IDReceta
+    constraint: FK_Rubr
+    table: reclineas
+  reglascomerciales.IDRegCom:
+  - column: IDRegCom
+    constraint: FK_Rubr
+    table: factreglasaplicadas
+  rubros.CodRubro:
+  - column: CodRubro
+    constraint: FK_Rubr
+    table: medicamentos
+  - column: IDRubro
+    constraint: FK_Rubr
+    table: subrubros
+  subrubros.IDSubRubro:
+  - column: IDSubRubro
+    constraint: FK_Rubr
+    table: medicamentos
+  tamanos.IDTamano:
+  - column: CodTamano
+    constraint: FK_Rubr
+    table: medicamentos
+  tarjetas.IDTarjeta:
+  - column: IDTarjeta
+    constraint: FK_Rubr
+    table: factpagos
+  tarjetasmovimientos.IdMovTarjeta:
+  - column: IdMovTarjeta
+    constraint: FK_Rubr
+    table: factpagos
+  tiposconcentracion.IDTipoConc:
+  - column: IDTipoConc
+    constraint: FK_Rubr
+    table: medicamentos
+  tiposdecentrosdecostos.IDTipoCentroCosto:
+  - column: IDTipoCentroCosto
+    constraint: FK_Rubr
+    table: gastos
+  tiposiva.idTipoIva:
+  - column: idTipoIVA
+    constraint: FK_Rubr
+    table: medicamentos
+  tiposunidades.IDTipoUnidad:
+  - column: IDTipoUnidad
+    constraint: FK_Rubr
+    table: medicamentos
+  tiposventa.idTipoVenta:
+  - column: idTipoVenta
+    constraint: FK_Rubr
+    table: medicamentos
+  tp_ciclos.IdCiclo:
+  - column: IdCiclo
+    constraint: FK_Rubr
+    table: clientes
+  transferencias.IdTransferencia:
+  - column: idTransferencia
+    constraint: FK_Rubr
+    table: factpagos
+  usuariosperfiles.IDPerfil:
+  - column: IdPerfil
+    constraint: FK_Rubr
+    table: operadores
+statistics:
+  composite_foreign_keys: 4
+  single_column_foreign_keys: 82
+  tables_with_incoming_fks: 58
+  tables_with_outgoing_fks: 35
+  total_foreign_keys: 86
