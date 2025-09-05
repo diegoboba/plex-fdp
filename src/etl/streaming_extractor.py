@@ -11,12 +11,22 @@ import yaml
 
 
 class StreamingDataExtractor:
-    def __init__(self):
+    def __init__(self, mysql_timeout: int = None):
+        """
+        Initialize StreamingDataExtractor with optional MySQL timeout
+        
+        Args:
+            mysql_timeout: Query timeout in seconds (default: 300 for data, 5 for counts)
+        """
         self.db = DatabaseConnector()
         self.bq_manager = BigQueryManager()
         self.config = Config()
         self.structure_generator = MySQLStructureGenerator()
         self.strategy_config = self._load_incremental_strategy()
+        
+        # Store timeout settings
+        self.mysql_data_timeout = mysql_timeout or 300  # Default 5 minutes for data queries
+        self.mysql_count_timeout = min(mysql_timeout or 5, 10)  # Max 10 seconds for counts
     
     def _load_incremental_strategy(self):
         """Load incremental strategy configuration from YAML"""
@@ -175,14 +185,33 @@ class StreamingDataExtractor:
         # For truncate, we'll use WRITE_TRUNCATE on first chunk
         
         # Get total row count for progress tracking
-        total_rows = self._get_query_row_count(database_name, query or f"SELECT * FROM {table_name}")
-        total_chunks = math.ceil(total_rows / chunk_size) if total_rows > 0 else 1
+        total_rows = self._get_query_row_count(
+            database_name, 
+            query or f"SELECT * FROM {table_name}",
+            table_name=table_name
+        )
         
-        print(f"Processing {total_rows:,} rows in {total_chunks} chunks of {chunk_size:,}")
+        # Handle different row count scenarios
+        if total_rows == -1:
+            # Unknown count - process until no more data
+            print(f"Processing unknown number of rows in chunks of {chunk_size:,}")
+            print(f"⚠️ Will continue extracting until no more data is returned")
+            total_chunks = float('inf')  # Unknown number of chunks
+        elif total_rows == 0:
+            print(f"No rows to process")
+            return 0
+        else:
+            total_chunks = math.ceil(total_rows / chunk_size)
+            print(f"Processing {total_rows:,} rows in {total_chunks} chunks of {chunk_size:,}")
         
         total_loaded = 0
+        chunk_num = 0
         
-        for chunk_num in range(total_chunks):
+        # Process chunks until no more data
+        while True:
+            if total_chunks != float('inf') and chunk_num >= total_chunks:
+                break
+                
             offset = chunk_num * chunk_size
             
             # Build chunked query
@@ -194,14 +223,22 @@ class StreamingDataExtractor:
             print(f"Processing chunk {chunk_num + 1}/{total_chunks} (offset: {offset:,})")
             
             try:
-                # Extract chunk
+                # Extract chunk with timeout
                 chunk_df = self.db._extract_table_data_direct(
-                    database_name, table_name, chunk_query, max_retries=3
+                    database_name, table_name, chunk_query, 
+                    max_retries=3, timeout=self.mysql_data_timeout
                 )
                 
                 if len(chunk_df) == 0:
-                    print(f"No more data at chunk {chunk_num + 1}, stopping")
+                    if total_rows == -1:
+                        print(f"✅ No more data at chunk {chunk_num + 1} - extraction complete")
+                    else:
+                        print(f"No more data at chunk {chunk_num + 1}, stopping")
                     break
+                
+                # If we got a full chunk and row count was unknown, continue
+                if len(chunk_df) == chunk_size and total_rows == -1:
+                    print(f"📦 Full chunk received, continuing to next chunk...")
                 
                 # Convert timedelta columns to string for BigQuery TIME fields
                 for col in chunk_df.columns:
@@ -233,33 +270,73 @@ class StreamingDataExtractor:
                 )
                 
                 total_loaded += len(chunk_df)
-                print(f"Loaded chunk {chunk_num + 1}: {len(chunk_df):,} rows (total: {total_loaded:,})")
+                chunk_display = f"{chunk_num + 1}/{total_chunks}" if total_chunks != float('inf') else f"{chunk_num + 1}"
+                print(f"Loaded chunk {chunk_display}: {len(chunk_df):,} rows (total: {total_loaded:,})")
+                
+                # Increment chunk counter
+                chunk_num += 1
                 
             except Exception as e:
                 print(f"Error processing chunk {chunk_num + 1}: {str(e)}")
+                # Increment chunk counter even on error to avoid infinite loop
+                chunk_num += 1
                 # Continue with next chunk instead of failing completely
                 continue
         
         print(f"Completed streaming extraction: {total_loaded:,} total rows loaded to {bq_table_name}")
         return total_loaded
     
-    def _get_query_row_count(self, database_name: str, query: str) -> int:
-        """Get row count for a query"""
+    def _get_query_row_count(self, database_name: str, query: str, table_name: str = None) -> int:
+        """Get row count for a query with fallback to estimated count"""
         connection = None
         try:
             connection = self.db.get_mysql_connection(database_name)
             
-            # Wrap query in COUNT to get total rows
+            # First try: Simple COUNT with timeout
             count_query = f"SELECT COUNT(*) as row_count FROM ({query}) as subquery"
             
             with connection.cursor() as cursor:
+                # Set timeout for count queries (configurable, with fallback for older MySQL)
+                try:
+                    timeout_ms = self.mysql_count_timeout * 1000
+                    cursor.execute(f"SET SESSION MAX_EXECUTION_TIME={timeout_ms}")
+                    print(f"⏱️ Count timeout set to {self.mysql_count_timeout} seconds")
+                except Exception as e:
+                    if "Unknown system variable" in str(e):
+                        print(f"⚠️ MySQL version doesn't support MAX_EXECUTION_TIME, using default timeout for counts")
+                    else:
+                        print(f"⚠️ Could not set count timeout: {e}")
+                
                 cursor.execute(count_query)
                 result = cursor.fetchone()
-                return result['row_count']
+                actual_count = result['row_count']
+                print(f"✅ Got exact row count: {actual_count:,}")
+                return actual_count
                 
         except Exception as e:
-            print(f"Error getting query row count: {str(e)}")
-            return 100000  # Default estimate
+            print(f"⚠️ Error getting exact row count: {str(e)}")
+            
+            # Fallback: Try to get estimated count from information_schema
+            if table_name:
+                try:
+                    with connection.cursor() as cursor:
+                        cursor.execute(
+                            "SELECT TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES "
+                            "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s",
+                            (database_name, table_name)
+                        )
+                        result = cursor.fetchone()
+                        if result and result['TABLE_ROWS']:
+                            estimated = result['TABLE_ROWS']
+                            print(f"📊 Using estimated row count from INFORMATION_SCHEMA: {estimated:,}")
+                            # Add 20% buffer to ensure we don't miss rows
+                            return int(estimated * 1.2)
+                except Exception as e2:
+                    print(f"⚠️ Could not get estimated count: {e2}")
+            
+            # Final fallback: Return -1 to signal unknown count
+            print(f"⚠️ Row count unknown - will process until no more data")
+            return -1
         finally:
             if connection:
                 connection.close()
@@ -293,7 +370,11 @@ class StreamingDataExtractor:
                 # Get table strategy from YAML config
                 table_config = self.get_table_strategy(database_name, table_name)
                 strategy = table_config.get('strategy', 'full_refresh')
-                chunk_size = table_config.get('chunk_size', 100000)
+                # Use override chunk size if provided, otherwise use config or default
+                if hasattr(self, 'override_chunk_size') and self.override_chunk_size:
+                    chunk_size = self.override_chunk_size
+                else:
+                    chunk_size = table_config.get('chunk_size', 100000)
                 
                 print(f"📋 Strategy: {strategy} | Chunk size: {chunk_size:,}")
                 print(f"📄 {table_config.get('description', 'No description')}")
@@ -336,9 +417,124 @@ class StreamingDataExtractor:
         
         return results
     
-    def extract_all_data_streaming(self, lookback_days: int = 3, force_full_refresh: bool = False) -> dict:
-        """Extract data from both databases using YAML configuration"""
+    def extract_single_table(self, table_spec: str, lookback_days: int = 3, 
+                            force_full_refresh: bool = False, override_chunk_size: int = None,
+                            mysql_timeout: int = None) -> dict:
+        """
+        Extract data from a single specific table
+        
+        Args:
+            table_spec: Table specification in format 'database.table' (e.g., 'plex.factcabecera')
+            lookback_days: Number of days to look back for incremental processing
+            force_full_refresh: Force full refresh for the table
+            override_chunk_size: Override default chunk size from YAML
+            mysql_timeout: Override default MySQL timeout in seconds
+        
+        Returns:
+            Dictionary with table name and rows loaded
+        """
+        # Update timeout if provided
+        if mysql_timeout:
+            self.mysql_data_timeout = mysql_timeout
+            self.mysql_count_timeout = min(mysql_timeout, 10)  # Max 10s for counts
+            print(f"⏱️ Using custom MySQL timeout: {mysql_timeout} seconds")
+        # Parse table specification
+        if '.' not in table_spec:
+            raise ValueError(f"Table must be in format 'database.table', got: {table_spec}")
+        
+        database_name, table_name = table_spec.split('.', 1)
+        
+        print(f"🎯 Processing single table: {database_name}.{table_name}")
+        
+        if override_chunk_size:
+            print(f"📦 Using override chunk size: {override_chunk_size:,} rows")
+            self.override_chunk_size = override_chunk_size
+        else:
+            self.override_chunk_size = None
+        
+        # Get table configuration
+        table_config = self.get_table_strategy(database_name, table_name)
+        strategy = table_config.get('strategy', 'full_refresh')
+        
+        # Override strategy if force_full_refresh
+        if force_full_refresh:
+            strategy = 'full_refresh'
+            print(f"🔄 Forcing full refresh for {table_name}")
+        
+        # Use override chunk size if provided, otherwise use config or default
+        if hasattr(self, 'override_chunk_size') and self.override_chunk_size:
+            chunk_size = self.override_chunk_size
+        else:
+            chunk_size = table_config.get('chunk_size', 100000)
+        
+        print(f"📋 Strategy: {strategy} | Chunk size: {chunk_size:,}")
+        
+        # Determine BigQuery table name
+        bq_table_name = f"{database_name}_{table_name}"
+        
+        try:
+            # Process based on strategy
+            if strategy == 'full_refresh' or force_full_refresh:
+                # Full refresh - truncate and load all data
+                rows_loaded = self.extract_and_load_table_streaming(
+                    database_name=database_name,
+                    table_name=table_name,
+                    bq_table_name=bq_table_name,
+                    chunk_size=chunk_size,
+                    truncate_target=True,
+                    query=None
+                )
+            else:
+                # Incremental processing
+                mysql_query, bq_delete_condition = self._build_incremental_queries(
+                    database_name, table_name, table_config, lookback_days
+                )
+                
+                # Delete old data from BigQuery
+                if bq_delete_condition:
+                    print(f"🗑️  Deleting incremental data from {bq_table_name}")
+                    print(f"   Query: {bq_delete_condition}")
+                    self._delete_incremental_data(bq_table_name, bq_delete_condition)
+                
+                # Load new data
+                rows_loaded = self.extract_and_load_table_streaming(
+                    database_name=database_name,
+                    table_name=table_name,
+                    bq_table_name=bq_table_name,
+                    chunk_size=chunk_size,
+                    truncate_target=False,
+                    query=mysql_query
+                )
+            
+            result = {bq_table_name: rows_loaded}
+            print(f"✅ Completed {table_name}: {rows_loaded:,} rows loaded")
+            return result
+            
+        except Exception as e:
+            print(f"❌ Failed to process {table_name}: {str(e)}")
+            return {bq_table_name: 0}
+    
+    def extract_all_data_streaming(self, lookback_days: int = 3, force_full_refresh: bool = False, 
+                                  override_chunk_size: int = None, mysql_timeout: int = None) -> dict:
+        """Extract data from both databases using YAML configuration
+        
+        Args:
+            lookback_days: Number of days to look back for incremental processing
+            force_full_refresh: Force full refresh for all tables
+            override_chunk_size: Override default chunk size from YAML
+            mysql_timeout: Override default MySQL timeout in seconds
+        """
+        # Update timeout if provided
+        if mysql_timeout:
+            self.mysql_data_timeout = mysql_timeout
+            self.mysql_count_timeout = min(mysql_timeout, 10)  # Max 10s for counts
+            print(f"⏱️ Using custom MySQL timeout: {mysql_timeout} seconds")
         print(f"🚀 Starting streaming data extraction with lookback_days={lookback_days}, force_full_refresh={force_full_refresh}")
+        if override_chunk_size:
+            print(f"📦 Using override chunk size: {override_chunk_size:,} rows")
+            self.override_chunk_size = override_chunk_size
+        else:
+            self.override_chunk_size = None
         
         all_results = {}
         

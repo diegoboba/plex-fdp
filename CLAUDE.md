@@ -69,6 +69,14 @@ Sistema ETL para farmacéuticas que extrae datos de MySQL (Plex/Quantio) y los c
 - **Solution**: Conversión a string formato TIME antes de carga
 - **Result**: Campos TIME sin errores de parsing
 
+### **Problem 6: Row Count Timeouts on Large Tables**
+- **Issue**: COUNT(*) timeouts en tablas grandes (>30M rows), causando extracción de solo 1 chunk
+- **Solution**: Sistema de 3 niveles de fallback:
+  1. COUNT con timeout de 5 segundos
+  2. Estimación desde INFORMATION_SCHEMA.TABLES (+20% buffer)
+  3. Extracción continua hasta EOF (sin límite de chunks)
+- **Result**: Tablas grandes se procesan completamente sin importar timeouts
+
 ## 📊 Current Status
 
 ### **Working Tables**
@@ -87,11 +95,14 @@ Sistema ETL para farmacéuticas que extrae datos de MySQL (Plex/Quantio) y los c
 
 ### **Run Streaming ETL**
 ```bash
-# Full extraction (testing)
-python src/main_streaming.py
+# Full extraction with default chunk size
+python -m src.main_streaming --force_full_refresh
 
-# Or específico para local
-python -c "from src.main_streaming import run_local_streaming; run_local_streaming()"
+# Incremental with custom chunk size (recommended for large tables)
+python -m src.main_streaming --lookback_days 30 --chunk_size 50000
+
+# Re-process failed tables only
+python reprocess_failed_tables.py --chunk-size 50000
 ```
 
 ### **Environment Setup**

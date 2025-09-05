@@ -1,0 +1,89 @@
+# Schema Management Strategy Configuration
+# Controls how ETL handles schema conflicts and evolution
+
+metadata:
+  version: "1.0"
+  description: "Schema management strategy for MySQL to BigQuery ETL"
+  last_updated: "2025-08-26"
+
+# Global schema settings
+global_settings:
+  # IMPORTANT: Set to true to avoid REQUIRED/NULLABLE conflicts
+  # This makes ALL fields NULLABLE for maximum compatibility
+  force_all_nullable: true
+  
+  # Allow schema evolution (adding new fields)
+  allow_schema_evolution: true
+  
+  # How to handle schema conflicts
+  conflict_resolution: "use_most_permissive"  # Options: use_most_permissive, fail, use_existing
+  
+  # Log all schema reconciliations
+  log_reconciliations: true
+
+# Per-table overrides (if needed)
+table_overrides:
+  # Example: Force specific behavior for critical tables
+  factcabecera:
+    force_nullable: true
+    allow_evolution: true
+    
+  factlineas:
+    force_nullable: true
+    allow_evolution: true
+    
+  clientes:
+    force_nullable: true
+    allow_evolution: true
+    
+  # Add more tables as needed
+
+# Field-level requirements
+# Use this to enforce specific fields that MUST be NOT NULL
+critical_fields:
+  # Example - uncomment if needed:
+  # factcabecera:
+  #   - IDComprobante  # This field must always have a value
+  # factlineas:
+  #   - IDLinea
+
+# Schema validation rules
+validation:
+  # Check for data type compatibility
+  check_type_compatibility: true
+  
+  # Warn on precision loss (e.g., FLOAT64 to INT64)
+  warn_precision_loss: true
+  
+  # Fail on incompatible type changes
+  fail_on_type_mismatch: false  # Set to true for strict mode
+
+# Incremental load behavior
+incremental_behavior:
+  # How to handle schema for incremental loads
+  mode: "safe"  # Options: safe (all nullable), strict (enforce types), flexible (auto-adapt)
+  
+  # Check schema before each incremental load
+  pre_check_schema: true
+  
+  # Auto-fix minor schema issues
+  auto_fix_minor_issues: true
+
+# Full refresh behavior  
+full_refresh_behavior:
+  # Drop and recreate table with new schema
+  recreate_table: true
+  
+  # Make all fields nullable on recreation
+  force_nullable_on_recreate: true
+
+# Logging and monitoring
+monitoring:
+  # Log all schema changes
+  log_schema_changes: true
+  
+  # Create audit table for schema history
+  create_audit_table: false
+  
+  # Alert on major schema changes
+  alert_on_major_changes: false

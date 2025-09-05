@@ -15,11 +15,16 @@ class DatabaseConnector:
         self.secret_manager = SecretManager(self.project_id)
         self._connections = {}  # Cache connections
     
-    def get_mysql_connection(self, database_name: str):
+    def get_mysql_connection(self, database_name: str, read_timeout: int = None):
         """Create connection to MySQL database using Secret Manager"""
         try:
             # Get configuration from Secret Manager
             config = self.secret_manager.get_mysql_config(database_name)
+            
+            # Use custom read_timeout if provided, otherwise default to 300
+            actual_read_timeout = read_timeout if read_timeout else 300
+            if read_timeout:
+                print(f"⏱️ Using MySQL read timeout: {actual_read_timeout} seconds")
             
             connection = pymysql.connect(
                 host=config['host'],
@@ -31,7 +36,7 @@ class DatabaseConnector:
                 cursorclass=pymysql.cursors.DictCursor,
                 autocommit=True,
                 connect_timeout=60,
-                read_timeout=300,
+                read_timeout=actual_read_timeout,
                 write_timeout=300
             )
             
@@ -120,13 +125,18 @@ class DatabaseConnector:
     
     def _extract_table_data_direct(self, database_name: str, table_name: str, 
                                   query: Optional[str] = None, limit: Optional[int] = None,
-                                  max_retries: int = 3) -> pd.DataFrame:
-        """Direct extraction with retries"""
+                                  max_retries: int = 3, timeout: int = None) -> pd.DataFrame:
+        """Direct extraction with retries and configurable timeout
+        
+        Args:
+            timeout: Query timeout in seconds (optional)
+        """
         connection = None
         
         for attempt in range(max_retries):
             try:
-                connection = self.get_mysql_connection(database_name)
+                # Use custom timeout for connection if provided
+                connection = self.get_mysql_connection(database_name, read_timeout=timeout)
                 
                 if query is None:
                     query = f"SELECT * FROM {table_name}"
@@ -137,6 +147,20 @@ class DatabaseConnector:
                 
                 # Use manual cursor approach instead of pd.read_sql to avoid header duplication bug
                 with connection.cursor() as cursor:
+                    # Set timeout if provided (using wait_timeout which is more compatible)
+                    if timeout:
+                        try:
+                            # Try modern MySQL syntax first
+                            timeout_ms = timeout * 1000
+                            cursor.execute(f"SET SESSION MAX_EXECUTION_TIME={timeout_ms}")
+                            print(f"⏱️ Data query timeout set to {timeout} seconds")
+                        except Exception as e:
+                            if "Unknown system variable" in str(e):
+                                # Fallback for older MySQL versions - just print warning
+                                print(f"⚠️ MySQL version doesn't support MAX_EXECUTION_TIME, using default timeout")
+                            else:
+                                print(f"⚠️ Could not set timeout: {e}")
+                    
                     cursor.execute(query)
                     results = cursor.fetchall()
                     

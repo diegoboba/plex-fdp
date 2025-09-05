@@ -1,6 +1,7 @@
 from google.cloud import bigquery
 from google.cloud.exceptions import NotFound
 from ..utils.config import Config
+from ..utils.schema_reconciler import SchemaReconciler
 
 class BigQueryManager:
     def __init__(self):
@@ -8,6 +9,11 @@ class BigQueryManager:
         self.client = bigquery.Client(project=self.config.GCP_PROJECT_ID)
         self.dataset_id = self.config.BIGQUERY_DATASET
         self.dataset_ref = self.client.dataset(self.dataset_id)
+        self.schema_reconciler = SchemaReconciler(
+            self.client, 
+            self.config.GCP_PROJECT_ID, 
+            self.dataset_id
+        )
     
     def create_dataset_if_not_exists(self):
         """Create BigQuery dataset if it doesn't exist"""
@@ -93,6 +99,13 @@ class BigQueryManager:
         """Load pandas DataFrame directly to BigQuery table with proper schema"""
         try:
             table_id = f"{self.config.GCP_PROJECT_ID}.{self.dataset_id}.{table_name}"
+            
+            # Reconcile schema if table exists and we're appending
+            if schema and write_disposition == 'WRITE_APPEND':
+                schema = self.schema_reconciler.get_safe_schema_for_incremental(table_name, schema)
+            elif schema and write_disposition == 'WRITE_TRUNCATE':
+                # For full refresh, make all fields NULLABLE for safety
+                schema = self.schema_reconciler._make_all_nullable(schema)
             
             # Configure job settings
             if schema:
