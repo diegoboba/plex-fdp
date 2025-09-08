@@ -7,12 +7,14 @@ except ImportError:
 
 from .etl.streaming_extractor import StreamingDataExtractor
 from .cloud.bigquery import BigQueryManager
+from .utils.logging_helper import ETLLogger
 from datetime import datetime
 import sys
 
 def run_streaming_etl_pipeline(lookback_days: int = 3, force_full_refresh: bool = False, 
                               chunk_size: int = None, single_table: str = None,
-                              mysql_timeout: int = None):
+                              mysql_timeout: int = None, initial_offset: int = None,
+                              table_group: str = None):
     """Optimized ETL pipeline that loads data directly to BigQuery in chunks
     
     Args:
@@ -21,64 +23,85 @@ def run_streaming_etl_pipeline(lookback_days: int = 3, force_full_refresh: bool 
         chunk_size: Override default chunk size (rows per chunk)
         single_table: Process only this specific table (format: database.table, e.g., 'plex.factcabecera')
         mysql_timeout: MySQL query timeout in seconds (default: 300 for data, 5 for counts)
+        initial_offset: Starting row offset for data extraction (useful for resuming failed loads)
+        table_group: Process only tables in specified group (high_priority, medium_priority, low_priority)
     """
-    try:
+    # Use ETL Logger context manager to capture ALL output
+    with ETLLogger("etl_streaming") as etl_logger:
         print(f"Starting streaming ETL pipeline at {datetime.now()}")
         if chunk_size:
             print(f"Using custom chunk size: {chunk_size:,} rows")
         if single_table:
             print(f"Processing single table: {single_table}")
+        if table_group:
+            print(f"Processing table group: {table_group}")
         if mysql_timeout:
             print(f"Using MySQL timeout: {mysql_timeout} seconds")
+        if initial_offset:
+            print(f"Starting from offset: {initial_offset:,} rows")
         
-        # Initialize components with timeout if provided
-        streaming_extractor = StreamingDataExtractor(mysql_timeout=mysql_timeout)
-        bq_manager = BigQueryManager()
-        
-        # Step 1: Extract and load data directly to BigQuery (streaming)
-        print("Step 1: Extracting and loading data to BigQuery (streaming)...")
-        
-        if single_table:
-            # Process single table only
-            load_results = streaming_extractor.extract_single_table(
-                table_spec=single_table,
-                lookback_days=lookback_days,
-                force_full_refresh=force_full_refresh,
-                override_chunk_size=chunk_size,
-                mysql_timeout=mysql_timeout
-            )
-        else:
-            # Process all tables
-            load_results = streaming_extractor.extract_all_data_streaming(
-                lookback_days=lookback_days, 
-                force_full_refresh=force_full_refresh,
-                override_chunk_size=chunk_size,
-                mysql_timeout=mysql_timeout
-            )
-        
-        if not load_results or sum(load_results.values()) == 0:
-            print("No data extracted/loaded. Exiting.")
-            return {"status": "success", "message": "No data to process"}
-        
-        # NOTA: Analytical views removidas - ver PLAN.md para implementación futura
-        
-        print(f"Streaming ETL pipeline completed successfully at {datetime.now()}")
-        return {
-            "status": "success", 
-            "message": f"Loaded {sum(load_results.values()):,} total rows across {len(load_results)} tables",
-            "tables_processed": len(load_results),
-            "total_rows_loaded": sum(load_results.values()),
-            "table_details": load_results,
-            "timestamp": datetime.now().isoformat()
-        }
-        
-    except Exception as e:
-        print(f"Streaming ETL pipeline failed: {str(e)}")
-        return {
-            "status": "error", 
-            "message": str(e),
-            "timestamp": datetime.now().isoformat()
-        }
+        try:
+            # Initialize components with timeout if provided
+            streaming_extractor = StreamingDataExtractor(mysql_timeout=mysql_timeout)
+            bq_manager = BigQueryManager()
+            
+            # Step 1: Extract and load data directly to BigQuery (streaming)
+            print("Step 1: Extracting and loading data to BigQuery (streaming)...")
+            
+            if single_table:
+                # Process single table only
+                load_results = streaming_extractor.extract_single_table(
+                    table_spec=single_table,
+                    lookback_days=lookback_days,
+                    force_full_refresh=force_full_refresh,
+                    override_chunk_size=chunk_size,
+                    mysql_timeout=mysql_timeout,
+                    initial_offset=initial_offset
+                )
+            elif table_group:
+                # Process tables in specified group
+                if initial_offset:
+                    print("⚠️  Warning: initial_offset is only supported for single table processing (--table)")
+                    print("   Ignoring offset for group processing")
+                load_results = streaming_extractor.extract_table_group(
+                    group_name=table_group,
+                    lookback_days=lookback_days,
+                    force_full_refresh=force_full_refresh,
+                    override_chunk_size=chunk_size,
+                    mysql_timeout=mysql_timeout
+                )
+            else:
+                # Process all tables
+                if initial_offset:
+                    print("⚠️  Warning: initial_offset is only supported for single table processing (--table)")
+                    print("   Ignoring offset for multi-table processing")
+                load_results = streaming_extractor.extract_all_data_streaming(
+                    lookback_days=lookback_days, 
+                    force_full_refresh=force_full_refresh,
+                    override_chunk_size=chunk_size,
+                    mysql_timeout=mysql_timeout
+                )
+            
+            if not load_results or sum(load_results.values()) == 0:
+                print("No data extracted/loaded. Exiting.")
+                return {"status": "success", "message": "No data to process"}
+            
+            # NOTA: Analytical views removidas - ver PLAN.md para implementación futura
+            
+            print(f"Streaming ETL pipeline completed successfully at {datetime.now()}")
+            return {
+                "status": "success", 
+                "message": f"Loaded {sum(load_results.values()):,} total rows across {len(load_results)} tables",
+                "tables_processed": len(load_results),
+                "total_rows_loaded": sum(load_results.values()),
+                "table_details": load_results,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            print(f"Streaming ETL pipeline failed: {str(e)}")
+            # Re-raise the exception so the context manager logs it properly
+            raise
 
 if CLOUD_FUNCTIONS_AVAILABLE:
     @functions_framework.http
@@ -144,6 +167,9 @@ if __name__ == "__main__":
     parser.add_argument('--chunk_size', type=int, help='Override default chunk size (rows per chunk). Example: 10000, 50000, 100000')
     parser.add_argument('--table', type=str, help='Process only this specific table (format: database.table, e.g., plex.factcabecera or quantio.productos)')
     parser.add_argument('--mysql_timeout', type=int, help='MySQL query timeout in seconds (default: 300 for data queries, 5 for counts). Example: 600 for 10 minutes')
+    parser.add_argument('--initial_offset', type=int, help='Starting row offset for data extraction (useful for resuming failed loads). Example: 3000000 to skip first 3M rows')
+    parser.add_argument('--table_group', type=str, choices=['high_priority', 'medium_priority', 'low_priority', 'master_data'],
+                       help='Process only tables in specified group. high_priority includes critical transactional tables')
     
     args = parser.parse_args()
     
@@ -163,13 +189,17 @@ if __name__ == "__main__":
     print(f"  - force_full_refresh: {args.force_full_refresh}")
     print(f"  - chunk_size: {args.chunk_size}")
     print(f"  - table: {args.table or 'ALL TABLES'}")
+    print(f"  - table_group: {args.table_group or 'none'}")
     print(f"  - mysql_timeout: {args.mysql_timeout or 'default (300s data, 5s count)'}")
+    print(f"  - initial_offset: {args.initial_offset or 'start from beginning'}")
     
     result = run_streaming_etl_pipeline(
         lookback_days=args.lookback_days, 
         force_full_refresh=args.force_full_refresh,
         chunk_size=args.chunk_size,
         single_table=args.table,
-        mysql_timeout=args.mysql_timeout
+        mysql_timeout=args.mysql_timeout,
+        initial_offset=args.initial_offset,
+        table_group=args.table_group
     )
     print(f"Local streaming ETL result: {result}")

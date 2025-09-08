@@ -33,7 +33,8 @@ class StreamingDataExtractor:
         config_path = os.path.join(os.path.dirname(__file__), '../../config/incremental_strategy.yaml')
         try:
             with open(config_path, 'r', encoding='utf-8') as f:
-                return yaml.safe_load(f)
+                config = yaml.safe_load(f)
+                return config
         except Exception as e:
             print(f"⚠️  Could not load incremental strategy config: {e}")
             return {}
@@ -147,10 +148,19 @@ class StreamingDataExtractor:
     def extract_and_load_table_streaming(self, database_name: str, table_name: str, 
                                        bq_table_name: str, query: str = None, 
                                        chunk_size: int = 100000, 
-                                       truncate_target: bool = False) -> int:
+                                       truncate_target: bool = False, initial_offset: int = None) -> int:
         """Extract data from MySQL table and load directly to BigQuery in chunks"""
         
-        print(f"Starting streaming extraction for {database_name}.{table_name} -> {bq_table_name}")
+        # Detect if this is incremental processing
+        is_incremental = query and 'WHERE' in query.upper() and ('DATE_SUB' in query.upper() or 'INTERVAL' in query.upper())
+        
+        if is_incremental:
+            print(f"📅 Starting INCREMENTAL extraction for {database_name}.{table_name} -> {bq_table_name}")
+        else:
+            print(f"Starting streaming extraction for {database_name}.{table_name} -> {bq_table_name}")
+        
+        if initial_offset:
+            print(f"🔄 Resuming from offset: {initial_offset:,} rows")
         
         # Create dataset if it doesn't exist
         self.bq_manager.create_dataset_if_not_exists()
@@ -162,14 +172,9 @@ class StreamingDataExtractor:
         # Print schema comparison for debugging
         SchemaMapper.print_schema_comparison(f"{database_name}.{table_name}", mysql_columns)
         
-        # Update MySQL structure documentation first
-        try:
-            row_count = self._get_query_row_count(database_name, f"SELECT * FROM {table_name}")
-            self.structure_generator.update_table_structure(
-                database_name, table_name, mysql_columns, row_count
-            )
-        except Exception as e:
-            print(f"⚠️  MySQL structure update failed, continuing with ETL: {e}")
+        # Skip MySQL structure documentation update to avoid full table counts
+        # This was causing timeouts on large tables like asientos_detalle
+        # Structure documentation can be updated separately if needed
         
         # Try to get schema from YAML first, fallback to live generation
         try:
@@ -184,12 +189,17 @@ class StreamingDataExtractor:
         
         # For truncate, we'll use WRITE_TRUNCATE on first chunk
         
-        # Get total row count for progress tracking
-        total_rows = self._get_query_row_count(
-            database_name, 
-            query or f"SELECT * FROM {table_name}",
-            table_name=table_name
-        )
+        # Skip row count for full table queries to avoid timeouts on large tables
+        if query:
+            print(f"🔍 Using incremental query for count: {query[:100]}...")
+            total_rows = self._get_query_row_count(
+                database_name, 
+                query,
+                table_name=table_name
+            )
+        else:
+            print(f"🔍 Skipping row count for full table (will process until no more data)")
+            total_rows = -1  # Process until no more data
         
         # Handle different row count scenarios
         if total_rows == -1:
@@ -202,17 +212,43 @@ class StreamingDataExtractor:
             return 0
         else:
             total_chunks = math.ceil(total_rows / chunk_size)
-            print(f"Processing {total_rows:,} rows in {total_chunks} chunks of {chunk_size:,}")
+            if is_incremental:
+                print(f"📅 Processing {total_rows:,} INCREMENTAL rows in {total_chunks} chunks of {chunk_size:,}")
+            else:
+                print(f"Processing {total_rows:,} rows in {total_chunks} chunks of {chunk_size:,}")
         
         total_loaded = 0
-        chunk_num = 0
+        
+        # Calculate starting chunk and offset
+        if initial_offset:
+            # If resuming from an offset, calculate the starting chunk
+            chunk_num = initial_offset // chunk_size
+            actual_offset = initial_offset
+            print(f"📍 Starting from chunk {chunk_num + 1} at offset {actual_offset:,}")
+            
+            # Adjust total chunks if we know the total rows
+            if total_rows > 0:
+                remaining_rows = total_rows - initial_offset
+                if remaining_rows <= 0:
+                    print(f"⚠️  Initial offset ({initial_offset:,}) >= total rows ({total_rows:,})")
+                    return 0
+                # Update total chunks based on remaining data
+                total_chunks = math.ceil(remaining_rows / chunk_size)
+                print(f"Processing remaining {remaining_rows:,} rows in {total_chunks} chunks")
+        else:
+            chunk_num = 0
+            actual_offset = 0
         
         # Process chunks until no more data
         while True:
             if total_chunks != float('inf') and chunk_num >= total_chunks:
                 break
                 
-            offset = chunk_num * chunk_size
+            # Use actual_offset for the first iteration if resuming, otherwise calculate normally
+            if initial_offset and chunk_num == (initial_offset // chunk_size):
+                offset = actual_offset
+            else:
+                offset = initial_offset + (chunk_num * chunk_size) if initial_offset else chunk_num * chunk_size
             
             # Build chunked query
             if query is None:
@@ -220,7 +256,9 @@ class StreamingDataExtractor:
             else:
                 chunk_query = f"{query} LIMIT {chunk_size} OFFSET {offset}"
             
-            print(f"Processing chunk {chunk_num + 1}/{total_chunks} (offset: {offset:,})")
+            # Adjust chunk display number for resuming
+            display_chunk_num = chunk_num + 1 if not initial_offset else chunk_num - (initial_offset // chunk_size) + 1
+            print(f"Processing chunk {display_chunk_num}/{total_chunks} (offset: {offset:,})")
             
             try:
                 # Extract chunk with timeout
@@ -283,7 +321,10 @@ class StreamingDataExtractor:
                 # Continue with next chunk instead of failing completely
                 continue
         
-        print(f"Completed streaming extraction: {total_loaded:,} total rows loaded to {bq_table_name}")
+        if is_incremental:
+            print(f"✅ Completed INCREMENTAL extraction: {total_loaded:,} rows loaded to {bq_table_name}")
+        else:
+            print(f"✅ Completed streaming extraction: {total_loaded:,} total rows loaded to {bq_table_name}")
         return total_loaded
     
     def _get_query_row_count(self, database_name: str, query: str, table_name: str = None) -> int:
@@ -292,15 +333,43 @@ class StreamingDataExtractor:
         try:
             connection = self.db.get_mysql_connection(database_name)
             
-            # First try: Simple COUNT with timeout
-            count_query = f"SELECT COUNT(*) as row_count FROM ({query}) as subquery"
+            # Check if this is an incremental query (has WHERE clause with date filters)
+            is_incremental = 'WHERE' in query.upper() and ('DATE_SUB' in query.upper() or 'INTERVAL' in query.upper())
+            
+            # For incremental queries, optimize the count query
+            if is_incremental:
+                # Remove any LIMIT/OFFSET clause first
+                count_base = query.split('LIMIT')[0].strip()
+                
+                # For queries with JOIN, replace SELECT part with COUNT(*)
+                if 'JOIN' in count_base.upper():
+                    # Find SELECT and FROM positions
+                    upper_query = count_base.upper()
+                    select_pos = upper_query.find('SELECT')
+                    from_pos = upper_query.find('FROM')
+                    
+                    if select_pos != -1 and from_pos != -1:
+                        # Replace everything between SELECT and FROM with COUNT(*)
+                        count_query = count_base[:select_pos + 6] + " COUNT(*) as row_count " + count_base[from_pos:]
+                    else:
+                        # Fallback to subquery
+                        count_query = f"SELECT COUNT(*) as row_count FROM ({count_base}) as subquery"
+                else:
+                    # No JOIN, simpler replacement
+                    count_query = f"SELECT COUNT(*) as row_count FROM ({count_base}) as subquery"
+            else:
+                # For full table queries, use simple subquery
+                count_query = f"SELECT COUNT(*) as row_count FROM ({query}) as subquery"
             
             with connection.cursor() as cursor:
                 # Set timeout for count queries (configurable, with fallback for older MySQL)
                 try:
                     timeout_ms = self.mysql_count_timeout * 1000
                     cursor.execute(f"SET SESSION MAX_EXECUTION_TIME={timeout_ms}")
-                    print(f"⏱️ Count timeout set to {self.mysql_count_timeout} seconds")
+                    if is_incremental:
+                        print(f"⏱️ Counting incremental rows (timeout: {self.mysql_count_timeout}s)...")
+                    else:
+                        print(f"⏱️ Count timeout set to {self.mysql_count_timeout} seconds")
                 except Exception as e:
                     if "Unknown system variable" in str(e):
                         print(f"⚠️ MySQL version doesn't support MAX_EXECUTION_TIME, using default timeout for counts")
@@ -310,7 +379,10 @@ class StreamingDataExtractor:
                 cursor.execute(count_query)
                 result = cursor.fetchone()
                 actual_count = result['row_count']
-                print(f"✅ Got exact row count: {actual_count:,}")
+                if is_incremental:
+                    print(f"✅ Incremental rows to process: {actual_count:,}")
+                else:
+                    print(f"✅ Got exact row count: {actual_count:,}")
                 return actual_count
                 
         except Exception as e:
@@ -417,9 +489,243 @@ class StreamingDataExtractor:
         
         return results
     
+    def extract_table_group(self, group_name: str, lookback_days: int = 3, 
+                           force_full_refresh: bool = False, override_chunk_size: int = None,
+                           mysql_timeout: int = None) -> dict:
+        """
+        Extract data from a specific group of tables
+        
+        Args:
+            group_name: Name of the table group (high_priority, medium_priority, low_priority, master_data)
+            lookback_days: Number of days to look back for incremental processing
+            force_full_refresh: Force full refresh for all tables
+            override_chunk_size: Override default chunk size
+            mysql_timeout: Override default MySQL timeout in seconds
+            
+        Returns:
+            Dictionary with table names and rows loaded
+        """
+        # Update timeout if provided
+        if mysql_timeout:
+            self.mysql_data_timeout = mysql_timeout
+            self.mysql_count_timeout = min(mysql_timeout, 10)
+            print(f"⏱️ Using custom MySQL timeout: {mysql_timeout} seconds")
+        
+        # Define table groups
+        table_groups = {
+            'high_priority': [
+                'plex.factcabecera',
+                'plex.factlineas', 
+                'plex.asientos',
+                'plex.asientos_detalle',
+                'plex.reccabecera',
+                'plex.reclineas'
+            ],
+            'medium_priority': [
+                'plex.factpagos',
+                'plex.factlineascostos',
+                'plex.factcoberturas',
+                'plex.stocklotes',
+                'plex.factreglasaplicadas',
+                'plex.medicamentos',
+                'plex.stock',
+                'plex.clientes'
+            ],
+            'low_priority': [
+                'plex.pedidoslineas',
+                'plex.factlineasbonificaciones',
+                'plex.comprascabecera',
+                'plex.comprasdetalle',
+                'plex.pagosproveedores',
+                'plex.apppedidos',
+                'plex.apppedidoslineas',
+                'plex.apppedidosmovimientos'
+            ],
+            'master_data': [
+                'plex.ciudades',
+                'plex.planes',
+                'plex.laboratorios',
+                'plex.cuentascontables',
+                'plex.obsociales',
+                'plex.proveedores',
+                'plex.operadores',
+                'plex.gastos',
+                'plex.clasificadores',
+                'plex.categories',
+                'plex.categorias',
+                'plex.sucursales',
+                'plex.empresas',
+                'plex.rubros'
+            ]
+        }
+        
+        # Get tables for the specified group
+        if group_name not in table_groups:
+            print(f"❌ Invalid group name: {group_name}")
+            print(f"   Valid groups: {', '.join(table_groups.keys())}")
+            return {}
+        
+        tables_to_process = table_groups[group_name]
+        print(f"🎯 Processing {len(tables_to_process)} tables in group '{group_name}':")
+        for table in tables_to_process:
+            print(f"   - {table}")
+        
+        # Process each table
+        results = {}
+        for idx, table_spec in enumerate(tables_to_process, 1):
+            print(f"\n{'='*80}")
+            print(f"Processing table {idx}/{len(tables_to_process)}: {table_spec}")
+            print(f"{'='*80}")
+            
+            try:
+                table_results = self.extract_single_table(
+                    table_spec=table_spec,
+                    lookback_days=lookback_days,
+                    force_full_refresh=force_full_refresh,
+                    override_chunk_size=override_chunk_size,
+                    mysql_timeout=mysql_timeout
+                )
+                results.update(table_results)
+            except Exception as e:
+                print(f"❌ Error processing {table_spec}: {e}")
+                # Continue with next table instead of failing completely
+                continue
+        
+        # Summary
+        print(f"\n{'='*80}")
+        print(f"Group '{group_name}' processing completed:")
+        print(f"  - Tables processed: {len(results)}/{len(tables_to_process)}")
+        print(f"  - Total rows loaded: {sum(results.values()):,}")
+        print(f"{'='*80}")
+        
+        return results
+    
+    def _build_incremental_queries(self, database_name: str, table_name: str, 
+                                  table_config: dict, lookback_days: int) -> tuple:
+        """
+        Build MySQL query and BigQuery delete condition for incremental processing
+        
+        Args:
+            database_name: Database name (plex or quantio)
+            table_name: Table name
+            table_config: Table configuration from YAML
+            lookback_days: Number of days to look back
+            
+        Returns:
+            Tuple of (mysql_query, bq_delete_condition)
+        """
+        # Check if table has custom_query defined
+        if 'custom_query' in table_config and table_config['custom_query']:
+            mysql_query = table_config['custom_query'].replace('{lookback_days}', str(lookback_days))
+        else:
+            # Build query based on watermark columns
+            watermark_columns = table_config.get('watermark_column', [])
+            if not watermark_columns:
+                # No watermark columns - return full table query
+                mysql_query = f"SELECT * FROM {table_name}"
+            else:
+                # Ensure watermark_columns is a list
+                if not isinstance(watermark_columns, list):
+                    watermark_columns = [watermark_columns]
+                
+                # Build WHERE conditions for each watermark column
+                conditions = []
+                for col in watermark_columns:
+                    # Handle different column types
+                    if 'fecha' in col.lower() or 'date' in col.lower() or 'emision' in col.lower():
+                        conditions.append(f"{col} >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)")
+                    else:
+                        conditions.append(f"DATE({col}) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)")
+                
+                # Combine conditions with OR
+                where_clause = " OR ".join(f"({cond})" for cond in conditions)
+                mysql_query = f"SELECT * FROM {table_name} WHERE {where_clause}"
+        
+        # Build BigQuery delete condition
+        if 'delete_condition' in table_config and table_config['delete_condition']:
+            bq_delete_condition = table_config['delete_condition'].replace('{lookback_days}', str(lookback_days))
+        else:
+            # Build delete condition based on watermark columns
+            watermark_columns = table_config.get('watermark_column', [])
+            if not watermark_columns:
+                bq_delete_condition = None
+            else:
+                # Ensure watermark_columns is a list
+                if not isinstance(watermark_columns, list):
+                    watermark_columns = [watermark_columns]
+                
+                # Build WHERE conditions for delete
+                conditions = []
+                for col in watermark_columns:
+                    if 'fecha' in col.lower() or 'date' in col.lower() or 'emision' in col.lower():
+                        conditions.append(f"{col} >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)")
+                    else:
+                        conditions.append(f"DATE({col}) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)")
+                
+                # Combine conditions with OR
+                bq_delete_condition = " OR ".join(f"({cond})" for cond in conditions)
+                if bq_delete_condition:
+                    bq_delete_condition = f"WHERE {bq_delete_condition}"
+        
+        return mysql_query, bq_delete_condition
+    
+    def _delete_incremental_data(self, bq_table_name: str, delete_condition: str):
+        """
+        Delete incremental data from BigQuery table
+        
+        Args:
+            bq_table_name: BigQuery table name
+            delete_condition: WHERE clause for deletion
+        """
+        try:
+            if not delete_condition:
+                return
+            
+            # Build delete query
+            project_id = os.environ.get('GCP_PROJECT_ID', 'plex-etl-project')
+            dataset_id = 'plex_analytics'
+            
+            # First, count rows to be deleted
+            if delete_condition.strip().upper().startswith('WHERE'):
+                count_query = f"SELECT COUNT(*) as cnt FROM `{project_id}.{dataset_id}.{bq_table_name}` {delete_condition}"
+                delete_query = f"DELETE FROM `{project_id}.{dataset_id}.{bq_table_name}` {delete_condition}"
+            else:
+                count_query = f"SELECT COUNT(*) as cnt FROM `{project_id}.{dataset_id}.{bq_table_name}` WHERE {delete_condition}"
+                delete_query = f"DELETE FROM `{project_id}.{dataset_id}.{bq_table_name}` WHERE {delete_condition}"
+            
+            from google.cloud import bigquery
+            client = bigquery.Client(project=project_id)
+            
+            # Count rows to be deleted
+            rows_to_delete = 0
+            try:
+                count_result = client.query(count_query).result()
+                for row in count_result:
+                    rows_to_delete = row.cnt
+                print(f"🗑️  Found {rows_to_delete:,} rows to delete from {bq_table_name}")
+            except Exception as count_error:
+                print(f"⚠️  Could not count rows to delete: {count_error}")
+                print(f"    Proceeding with delete anyway...")
+            
+            # Execute delete query
+            print(f"Executing delete: {delete_query[:200]}...")  # Show first 200 chars
+            job = client.query(delete_query)
+            result = job.result()  # Wait for completion
+            
+            # Get actual deleted row count from job statistics
+            deleted_rows = job.num_dml_affected_rows
+            if deleted_rows is not None:
+                print(f"✅ Deleted {deleted_rows:,} incremental rows from {bq_table_name}")
+            else:
+                print(f"✅ Deleted incremental data from {bq_table_name} (rows deleted: {rows_to_delete:,} estimated)")
+            
+        except Exception as e:
+            print(f"❌ Error deleting from {bq_table_name}: {e}")
+            # Don't raise - continue with insertion
+    
     def extract_single_table(self, table_spec: str, lookback_days: int = 3, 
                             force_full_refresh: bool = False, override_chunk_size: int = None,
-                            mysql_timeout: int = None) -> dict:
+                            mysql_timeout: int = None, initial_offset: int = None) -> dict:
         """
         Extract data from a single specific table
         
@@ -429,6 +735,7 @@ class StreamingDataExtractor:
             force_full_refresh: Force full refresh for the table
             override_chunk_size: Override default chunk size from YAML
             mysql_timeout: Override default MySQL timeout in seconds
+            initial_offset: Starting row offset for data extraction (useful for resuming failed loads)
         
         Returns:
             Dictionary with table name and rows loaded
@@ -438,6 +745,12 @@ class StreamingDataExtractor:
             self.mysql_data_timeout = mysql_timeout
             self.mysql_count_timeout = min(mysql_timeout, 10)  # Max 10s for counts
             print(f"⏱️ Using custom MySQL timeout: {mysql_timeout} seconds")
+        
+        # Validate initial_offset usage
+        if initial_offset and not force_full_refresh:
+            print(f"⚠️  Warning: initial_offset is recommended with --force_full_refresh")
+            print(f"    Incremental processing with offset may cause data inconsistencies")
+        
         # Parse table specification
         if '.' not in table_spec:
             raise ValueError(f"Table must be in format 'database.table', got: {table_spec}")
@@ -482,7 +795,8 @@ class StreamingDataExtractor:
                     bq_table_name=bq_table_name,
                     chunk_size=chunk_size,
                     truncate_target=True,
-                    query=None
+                    query=None,
+                    initial_offset=initial_offset
                 )
             else:
                 # Incremental processing
@@ -490,11 +804,13 @@ class StreamingDataExtractor:
                     database_name, table_name, table_config, lookback_days
                 )
                 
-                # Delete old data from BigQuery
-                if bq_delete_condition:
+                # Delete old data from BigQuery (skip if resuming with offset)
+                if bq_delete_condition and not initial_offset:
                     print(f"🗑️  Deleting incremental data from {bq_table_name}")
                     print(f"   Query: {bq_delete_condition}")
                     self._delete_incremental_data(bq_table_name, bq_delete_condition)
+                elif initial_offset:
+                    print(f"🔄 Skipping data deletion (resuming from offset {initial_offset:,})")
                 
                 # Load new data
                 rows_loaded = self.extract_and_load_table_streaming(
@@ -503,7 +819,8 @@ class StreamingDataExtractor:
                     bq_table_name=bq_table_name,
                     chunk_size=chunk_size,
                     truncate_target=False,
-                    query=mysql_query
+                    query=mysql_query,
+                    initial_offset=initial_offset
                 )
             
             result = {bq_table_name: rows_loaded}
