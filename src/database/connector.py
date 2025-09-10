@@ -35,7 +35,7 @@ class DatabaseConnector:
                 charset='utf8',
                 cursorclass=pymysql.cursors.DictCursor,
                 autocommit=True,
-                connect_timeout=60,
+                connect_timeout=30,  # Reduced from 60s
                 read_timeout=actual_read_timeout,
                 write_timeout=300
             )
@@ -63,7 +63,7 @@ class DatabaseConnector:
             return False
     
     def get_table_info(self, database_name: str, table_name: str) -> Dict[str, Any]:
-        """Get table information (schema, row count, etc.)"""
+        """Get table information (schema only - NO ROW COUNT to avoid timeouts)"""
         connection = None
         try:
             connection = self.get_mysql_connection(database_name)
@@ -73,11 +73,6 @@ class DatabaseConnector:
                 cursor.execute(f"DESCRIBE {table_name}")
                 schema = cursor.fetchall()
                 
-                # Get row count
-                cursor.execute(f"SELECT COUNT(*) as row_count FROM {table_name}")
-                count_result = cursor.fetchone()
-                row_count = count_result['row_count']
-                
                 # Get sample data
                 cursor.execute(f"SELECT * FROM {table_name} LIMIT 5")
                 sample_data = cursor.fetchall()
@@ -86,7 +81,6 @@ class DatabaseConnector:
                 'table_name': table_name,
                 'database': database_name,
                 'schema': schema,
-                'row_count': row_count,
                 'sample_data': sample_data
             }
             
@@ -100,23 +94,19 @@ class DatabaseConnector:
     def extract_table_data(self, database_name: str, table_name: str, 
                           query: Optional[str] = None, limit: Optional[int] = None,
                           chunk_size: Optional[int] = None, max_retries: int = 3) -> pd.DataFrame:
-        """Extract data from table as pandas DataFrame with chunking and retries"""
+        """Extract data from table as pandas DataFrame with chunking and retries - NO ROW COUNT"""
         connection = None
         
-        # Get estimated row count if chunking is needed
+        # Always use chunking if chunk_size is provided, otherwise use direct extraction
         if chunk_size is None:
-            row_count = self.get_table_row_count(database_name, table_name)
-            # Use chunking for large tables (>100k rows)
-            if row_count > 100000:
-                chunk_size = 50000
-                print(f"Large table detected ({row_count:,} rows). Using chunk size: {chunk_size:,}")
+            chunk_size = 50000  # Default chunk size
         
         try:
             if chunk_size and (query is None or "LIMIT" not in query.upper()):
-                # Use chunked extraction for large tables
+                # Use chunked extraction - process until no more data
                 return self._extract_table_data_chunked(database_name, table_name, query, chunk_size, max_retries)
             else:
-                # Use direct extraction for small tables or custom queries
+                # Use direct extraction for custom queries with LIMIT
                 return self._extract_table_data_direct(database_name, table_name, query, limit, max_retries)
                 
         except Exception as e:
@@ -147,22 +137,25 @@ class DatabaseConnector:
                 
                 # Use manual cursor approach instead of pd.read_sql to avoid header duplication bug
                 with connection.cursor() as cursor:
-                    # Set timeout if provided (using wait_timeout which is more compatible)
-                    if timeout:
-                        try:
-                            # Try modern MySQL syntax first
-                            timeout_ms = timeout * 1000
-                            cursor.execute(f"SET SESSION MAX_EXECUTION_TIME={timeout_ms}")
-                            print(f"⏱️ Data query timeout set to {timeout} seconds")
-                        except Exception as e:
-                            if "Unknown system variable" in str(e):
-                                # Fallback for older MySQL versions - just print warning
-                                print(f"⚠️ MySQL version doesn't support MAX_EXECUTION_TIME, using default timeout")
-                            else:
-                                print(f"⚠️ Could not set timeout: {e}")
+                    # ALWAYS set timeout to prevent hanging - default 5 minutes
+                    actual_timeout = timeout if timeout else 300  # 5 minutes default
+                    try:
+                        # Try modern MySQL syntax first
+                        timeout_ms = actual_timeout * 1000
+                        cursor.execute(f"SET SESSION MAX_EXECUTION_TIME={timeout_ms}")
+                        print(f"⏱️ Query timeout set to {actual_timeout} seconds")
+                    except Exception as e:
+                        if "Unknown system variable" in str(e):
+                            # Fallback for older MySQL versions - just print warning
+                            print(f"⚠️ MySQL version doesn't support MAX_EXECUTION_TIME, using connection timeout")
+                        else:
+                            print(f"⚠️ Could not set timeout: {e}")
                     
+                    print(f"📊 Executing query: {query[:100]}...")
                     cursor.execute(query)
+                    print(f"⏳ Fetching results...")
                     results = cursor.fetchall()
+                    print(f"✅ Query completed, got {len(results) if results else 0} rows")
                     
                     if results:
                         # Convert to DataFrame manually
@@ -197,17 +190,14 @@ class DatabaseConnector:
     def _extract_table_data_chunked(self, database_name: str, table_name: str, 
                                    query: Optional[str] = None, chunk_size: int = 50000,
                                    max_retries: int = 3) -> pd.DataFrame:
-        """Extract large table data in chunks"""
+        """Extract table data in chunks - NO ROW COUNT, process until no more data"""
         
-        # Get total row count
-        total_rows = self.get_table_row_count(database_name, table_name)
-        total_chunks = math.ceil(total_rows / chunk_size)
-        
-        print(f"Extracting {total_rows:,} rows in {total_chunks} chunks of {chunk_size:,}")
+        print(f"Extracting data in chunks of {chunk_size:,} (will process until no more data)")
         
         all_data = []
+        chunk_num = 0
         
-        for chunk_num in range(total_chunks):
+        while True:
             offset = chunk_num * chunk_size
             
             # Build chunked query
@@ -217,7 +207,7 @@ class DatabaseConnector:
                 # Modify existing query to add LIMIT and OFFSET
                 chunk_query = f"{query} LIMIT {chunk_size} OFFSET {offset}"
             
-            print(f"Extracting chunk {chunk_num + 1}/{total_chunks} (rows {offset:,} to {min(offset + chunk_size, total_rows):,})")
+            print(f"Extracting chunk {chunk_num + 1} (offset: {offset:,})")
             
             # Extract chunk with retries
             chunk_df = self._extract_table_data_direct(database_name, table_name, chunk_query, None, max_retries)
@@ -227,6 +217,7 @@ class DatabaseConnector:
                 break
                 
             all_data.append(chunk_df)
+            chunk_num += 1
             
             # Small delay between chunks to avoid overwhelming the database
             time.sleep(0.5)
@@ -240,23 +231,9 @@ class DatabaseConnector:
             return pd.DataFrame()
     
     def get_table_row_count(self, database_name: str, table_name: str) -> int:
-        """Get row count for a table (with caching)"""
-        connection = None
-        try:
-            connection = self.get_mysql_connection(database_name)
-            
-            with connection.cursor() as cursor:
-                cursor.execute(f"SELECT COUNT(*) as row_count FROM {table_name}")
-                result = cursor.fetchone()
-                return result['row_count']
-                
-        except Exception as e:
-            print(f"Error getting row count for {database_name}.{table_name}: {str(e)}")
-            # Return a default chunk size if count fails
-            return 100000
-        finally:
-            if connection:
-                connection.close()
+        """DEPRECATED - NO LONGER USED to avoid timeouts"""
+        print(f"⚠️  get_table_row_count is deprecated - use chunked extraction without counts")
+        return -1  # Unknown count
     
     def list_tables(self, database_name: str) -> list:
         """List all tables in database"""

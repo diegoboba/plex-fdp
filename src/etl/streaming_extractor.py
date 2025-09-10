@@ -151,6 +151,12 @@ class StreamingDataExtractor:
                                        truncate_target: bool = False, initial_offset: int = None) -> int:
         """Extract data from MySQL table and load directly to BigQuery in chunks"""
         
+        # Special handling for reccabecera and reclineas tables - use ID-based incremental
+        if table_name.lower() in ['reccabecera', 'reclineas'] and not truncate_target:
+            return self._extract_rec_table_incremental(
+                database_name, table_name, bq_table_name, chunk_size
+            )
+        
         # Detect if this is incremental processing
         is_incremental = query and 'WHERE' in query.upper() and ('DATE_SUB' in query.upper() or 'INTERVAL' in query.upper())
         
@@ -189,17 +195,9 @@ class StreamingDataExtractor:
         
         # For truncate, we'll use WRITE_TRUNCATE on first chunk
         
-        # Skip row count for full table queries to avoid timeouts on large tables
-        if query:
-            print(f"🔍 Using incremental query for count: {query[:100]}...")
-            total_rows = self._get_query_row_count(
-                database_name, 
-                query,
-                table_name=table_name
-            )
-        else:
-            print(f"🔍 Skipping row count for full table (will process until no more data)")
-            total_rows = -1  # Process until no more data
+        # NEVER do row counts - always process until no more data
+        print(f"🔍 Processing data without row count (will extract until no more data)")
+        total_rows = -1  # Process until no more data
         
         # Handle different row count scenarios
         if total_rows == -1:
@@ -327,91 +325,129 @@ class StreamingDataExtractor:
             print(f"✅ Completed streaming extraction: {total_loaded:,} total rows loaded to {bq_table_name}")
         return total_loaded
     
-    def _get_query_row_count(self, database_name: str, query: str, table_name: str = None) -> int:
-        """Get row count for a query with fallback to estimated count"""
-        connection = None
+    def _extract_rec_table_incremental(self, database_name: str, table_name: str, 
+                                        bq_table_name: str, chunk_size: int) -> int:
+        """Special incremental extraction for reccabecera/reclineas using MAX(IDReceta)"""
+        print(f"🔑 Starting special ID-based incremental extraction for {table_name}")
+        
+        # Get the last idreceta from BigQuery
+        max_id_query = f"""
+        SELECT COALESCE(MAX(IDReceta), 0) as max_id 
+        FROM `{self.config.BIGQUERY_PROJECT}.{self.config.BIGQUERY_DATASET}.{bq_table_name}`
+        """
+        
         try:
-            connection = self.db.get_mysql_connection(database_name)
+            print(f"📊 Getting MAX(IDReceta) from BigQuery...")
+            query_job = self.bq_manager.client.query(max_id_query)
+            result = query_job.result()
             
-            # Check if this is an incremental query (has WHERE clause with date filters)
-            is_incremental = 'WHERE' in query.upper() and ('DATE_SUB' in query.upper() or 'INTERVAL' in query.upper())
+            max_id = 0
+            for row in result:
+                max_id = row.max_id
             
-            # For incremental queries, optimize the count query
-            if is_incremental:
-                # Remove any LIMIT/OFFSET clause first
-                count_base = query.split('LIMIT')[0].strip()
-                
-                # For queries with JOIN, replace SELECT part with COUNT(*)
-                if 'JOIN' in count_base.upper():
-                    # Find SELECT and FROM positions
-                    upper_query = count_base.upper()
-                    select_pos = upper_query.find('SELECT')
-                    from_pos = upper_query.find('FROM')
-                    
-                    if select_pos != -1 and from_pos != -1:
-                        # Replace everything between SELECT and FROM with COUNT(*)
-                        count_query = count_base[:select_pos + 6] + " COUNT(*) as row_count " + count_base[from_pos:]
-                    else:
-                        # Fallback to subquery
-                        count_query = f"SELECT COUNT(*) as row_count FROM ({count_base}) as subquery"
-                else:
-                    # No JOIN, simpler replacement
-                    count_query = f"SELECT COUNT(*) as row_count FROM ({count_base}) as subquery"
-            else:
-                # For full table queries, use simple subquery
-                count_query = f"SELECT COUNT(*) as row_count FROM ({query}) as subquery"
+            print(f"✅ Last exported IDReceta: {max_id:,}")
             
-            with connection.cursor() as cursor:
-                # Set timeout for count queries (configurable, with fallback for older MySQL)
-                try:
-                    timeout_ms = self.mysql_count_timeout * 1000
-                    cursor.execute(f"SET SESSION MAX_EXECUTION_TIME={timeout_ms}")
-                    if is_incremental:
-                        print(f"⏱️ Counting incremental rows (timeout: {self.mysql_count_timeout}s)...")
-                    else:
-                        print(f"⏱️ Count timeout set to {self.mysql_count_timeout} seconds")
-                except Exception as e:
-                    if "Unknown system variable" in str(e):
-                        print(f"⚠️ MySQL version doesn't support MAX_EXECUTION_TIME, using default timeout for counts")
-                    else:
-                        print(f"⚠️ Could not set count timeout: {e}")
-                
-                cursor.execute(count_query)
-                result = cursor.fetchone()
-                actual_count = result['row_count']
-                if is_incremental:
-                    print(f"✅ Incremental rows to process: {actual_count:,}")
-                else:
-                    print(f"✅ Got exact row count: {actual_count:,}")
-                return actual_count
-                
+            # Check if table exists and has data
+            if max_id == 0:
+                print(f"⚠️  No data found in BigQuery table {bq_table_name} - starting from IDReceta > 0")
         except Exception as e:
-            print(f"⚠️ Error getting exact row count: {str(e)}")
+            # Table might not exist
+            print(f"⚠️  Could not get MAX(IDReceta) from BigQuery (table might not exist): {e}")
+            print(f"📋 Starting fresh extraction from IDReceta > 0")
+            max_id = 0
+        
+        # Build MySQL query using the indexed IDReceta column
+        mysql_query = f"SELECT * FROM {table_name} WHERE IDReceta > {max_id}"
+        print(f"🔍 MySQL query: {mysql_query}")
+        
+        # Create dataset if it doesn't exist
+        self.bq_manager.create_dataset_if_not_exists()
+        
+        # Get MySQL schema and create BigQuery schema
+        print(f"Retrieving schema for {database_name}.{table_name}...")
+        mysql_columns = self.db.get_table_schema(database_name, table_name)
+        
+        # Try to get schema from YAML first, fallback to live generation
+        try:
+            bq_schema = self.structure_generator.get_table_schema_for_bigquery(database_name, table_name)
+            if bq_schema:
+                print(f"✅ Using schema from mysql_structure.yaml ({len(bq_schema)} fields)")
+            else:
+                raise Exception("No schema found in YAML")
+        except Exception:
+            print("⚠️  Using live schema generation as fallback")
+            bq_schema = SchemaMapper.create_bigquery_schema(mysql_columns)
+        
+        # Process data in chunks without counting
+        print(f"🔍 Processing data without row count (will extract until no more data)")
+        total_loaded = 0
+        chunk_num = 0
+        
+        while True:
+            offset = chunk_num * chunk_size
+            chunk_query = f"{mysql_query} ORDER BY IDReceta LIMIT {chunk_size} OFFSET {offset}"
             
-            # Fallback: Try to get estimated count from information_schema
-            if table_name:
-                try:
-                    with connection.cursor() as cursor:
-                        cursor.execute(
-                            "SELECT TABLE_ROWS FROM INFORMATION_SCHEMA.TABLES "
-                            "WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s",
-                            (database_name, table_name)
+            print(f"Processing chunk {chunk_num + 1} (offset: {offset:,})")
+            
+            try:
+                # Extract chunk with timeout
+                chunk_df = self.db._extract_table_data_direct(
+                    database_name, table_name, chunk_query, 
+                    max_retries=3, timeout=self.mysql_data_timeout
+                )
+                
+                if len(chunk_df) == 0:
+                    print(f"✅ No more data at chunk {chunk_num + 1} - extraction complete")
+                    break
+                
+                # Convert timedelta columns to string for BigQuery TIME fields
+                for col in chunk_df.columns:
+                    if chunk_df[col].dtype == 'timedelta64[ns]':
+                        chunk_df[col] = chunk_df[col].apply(
+                            lambda x: str(x).split(' ')[-1] if pd.notna(x) else None
                         )
-                        result = cursor.fetchone()
-                        if result and result['TABLE_ROWS']:
-                            estimated = result['TABLE_ROWS']
-                            print(f"📊 Using estimated row count from INFORMATION_SCHEMA: {estimated:,}")
-                            # Add 20% buffer to ensure we don't miss rows
-                            return int(estimated * 1.2)
-                except Exception as e2:
-                    print(f"⚠️ Could not get estimated count: {e2}")
-            
-            # Final fallback: Return -1 to signal unknown count
-            print(f"⚠️ Row count unknown - will process until no more data")
-            return -1
-        finally:
-            if connection:
-                connection.close()
+                        print(f"Converted timedelta column {col} to TIME string format")
+                
+                # Clean data: remove null bytes and other problematic characters for BigQuery
+                for col in chunk_df.columns:
+                    if chunk_df[col].dtype == 'object':  # String/text columns
+                        # First clean null bytes and encoding issues
+                        chunk_df[col] = chunk_df[col].astype(str).str.replace('\x00', '', regex=False)
+                        chunk_df[col] = chunk_df[col].str.encode('utf-8', errors='ignore').str.decode('utf-8')
+                        # Replace various null representations with actual None
+                        chunk_df[col] = chunk_df[col].replace(['nan', 'None', 'null', 'NULL', ''], None)
+                        # Convert back to object dtype to handle None properly
+                        chunk_df[col] = chunk_df[col].where(chunk_df[col].notna(), None)
+                
+                # Always append for reccabecera (never truncate)
+                write_disposition = 'WRITE_APPEND'
+                
+                # Load chunk directly to BigQuery with proper schema
+                self.bq_manager.load_dataframe_to_table(
+                    chunk_df, bq_table_name, 
+                    write_disposition=write_disposition,
+                    schema=bq_schema
+                )
+                
+                total_loaded += len(chunk_df)
+                print(f"Loaded chunk {chunk_num + 1}: {len(chunk_df):,} rows (total: {total_loaded:,})")
+                
+                # Increment chunk counter
+                chunk_num += 1
+                
+            except Exception as e:
+                print(f"Error processing chunk {chunk_num + 1}: {str(e)}")
+                # Continue with next chunk instead of failing completely
+                chunk_num += 1
+                continue
+        
+        print(f"✅ Completed ID-based incremental extraction for {table_name}: {total_loaded:,} new rows loaded")
+        return total_loaded
+    
+    def _get_query_row_count(self, database_name: str, query: str, table_name: str = None) -> int:
+        """DEPRECATED - NO ROW COUNTS TO AVOID TIMEOUTS"""
+        print(f"⚠️ _get_query_row_count is deprecated - always returning -1 (unknown count)")
+        return -1  # Always unknown count to process until no more data
     
     def extract_database_data_streaming(self, database_name: str, lookback_days: int = 3, force_full_refresh: bool = False) -> dict:
         """Extract data from a database using YAML configuration"""
@@ -458,16 +494,23 @@ class StreamingDataExtractor:
                     truncate_target = True
                     print(f"🔄 Using FULL REFRESH")
                 else:
-                    mysql_query, delete_condition = self.build_incremental_query(
-                        database_name, table_name, table_config, lookback_days
-                    )
-                    truncate_target = False
-                    print(f"⚡ Using INCREMENTAL (DELETE + INSERT last {lookback_days} days)")
-                    print(f"🔍 MySQL Query: {mysql_query[:100]}...")
-                    
-                    # Delete incremental data from BigQuery BEFORE loading new data
-                    if delete_condition:
-                        self.delete_incremental_data_from_bigquery(bq_table_name, delete_condition)
+                    # Special handling for reccabecera and reclineas - no DELETE, uses ID-based incremental
+                    if table_name.lower() in ['reccabecera', 'reclineas']:
+                        print(f"🔑 Using special ID-based incremental for {table_name} (no DELETE)")
+                        mysql_query = None  # Will be handled by special method
+                        delete_condition = None
+                        truncate_target = False
+                    else:
+                        mysql_query, delete_condition = self.build_incremental_query(
+                            database_name, table_name, table_config, lookback_days
+                        )
+                        truncate_target = False
+                        print(f"⚡ Using INCREMENTAL (DELETE + INSERT last {lookback_days} days)")
+                        print(f"🔍 MySQL Query: {mysql_query[:100]}...")
+                        
+                        # Delete incremental data from BigQuery BEFORE loading new data
+                        if delete_condition:
+                            self.delete_incremental_data_from_bigquery(bq_table_name, delete_condition)
                 
                 # Extract and load data
                 rows_loaded = self.extract_and_load_table_streaming(
@@ -799,29 +842,42 @@ class StreamingDataExtractor:
                     initial_offset=initial_offset
                 )
             else:
-                # Incremental processing
-                mysql_query, bq_delete_condition = self._build_incremental_queries(
-                    database_name, table_name, table_config, lookback_days
-                )
-                
-                # Delete old data from BigQuery (skip if resuming with offset)
-                if bq_delete_condition and not initial_offset:
-                    print(f"🗑️  Deleting incremental data from {bq_table_name}")
-                    print(f"   Query: {bq_delete_condition}")
-                    self._delete_incremental_data(bq_table_name, bq_delete_condition)
-                elif initial_offset:
-                    print(f"🔄 Skipping data deletion (resuming from offset {initial_offset:,})")
-                
-                # Load new data
-                rows_loaded = self.extract_and_load_table_streaming(
-                    database_name=database_name,
-                    table_name=table_name,
-                    bq_table_name=bq_table_name,
-                    chunk_size=chunk_size,
-                    truncate_target=False,
-                    query=mysql_query,
-                    initial_offset=initial_offset
-                )
+                # Special handling for reccabecera and reclineas - no DELETE, uses ID-based incremental
+                if table_name.lower() in ['reccabecera', 'reclineas']:
+                    print(f"🔑 Using special ID-based incremental for {table_name} (no DELETE)")
+                    rows_loaded = self.extract_and_load_table_streaming(
+                        database_name=database_name,
+                        table_name=table_name,
+                        bq_table_name=bq_table_name,
+                        chunk_size=chunk_size,
+                        truncate_target=False,
+                        query=None,  # Will be handled by special method
+                        initial_offset=initial_offset
+                    )
+                else:
+                    # Standard incremental processing
+                    mysql_query, bq_delete_condition = self._build_incremental_queries(
+                        database_name, table_name, table_config, lookback_days
+                    )
+                    
+                    # Delete old data from BigQuery (skip if resuming with offset)
+                    if bq_delete_condition and not initial_offset:
+                        print(f"🗑️  Deleting incremental data from {bq_table_name}")
+                        print(f"   Query: {bq_delete_condition}")
+                        self._delete_incremental_data(bq_table_name, bq_delete_condition)
+                    elif initial_offset:
+                        print(f"🔄 Skipping data deletion (resuming from offset {initial_offset:,})")
+                    
+                    # Load new data
+                    rows_loaded = self.extract_and_load_table_streaming(
+                        database_name=database_name,
+                        table_name=table_name,
+                        bq_table_name=bq_table_name,
+                        chunk_size=chunk_size,
+                        truncate_target=False,
+                        query=mysql_query,
+                        initial_offset=initial_offset
+                    )
             
             result = {bq_table_name: rows_loaded}
             print(f"✅ Completed {table_name}: {rows_loaded:,} rows loaded")

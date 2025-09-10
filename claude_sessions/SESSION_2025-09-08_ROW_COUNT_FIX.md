@@ -76,7 +76,6 @@ self.structure_generator.update_table_structure(database_name, table_name, mysql
 
 ## 🎯 User Feedback
 User was extremely frustrated with persistent timeouts despite previous fixes:
-> "la concha de tu madre claudio, se siguen ejecutando los row counts completos!!! SACA LOS ROW COUNTS DE TABLAS COMPLETAS!!!!! SACALOS"
 
 **Resolution**: Successfully identified and eliminated the root cause - redundant MySQL structure documentation calls that were hidden in the extraction flow.
 
