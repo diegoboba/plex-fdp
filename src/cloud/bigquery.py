@@ -10,21 +10,26 @@ class BigQueryManager:
         self.dataset_id = self.config.BIGQUERY_DATASET
         self.dataset_ref = self.client.dataset(self.dataset_id)
         self.schema_reconciler = SchemaReconciler(
-            self.client, 
-            self.config.GCP_PROJECT_ID, 
+            self.client,
+            self.config.GCP_PROJECT_ID,
             self.dataset_id
         )
+        self._dataset_verified = False
+        self._schema_cache = {}  # Cache reconciled schemas per table
     
     def create_dataset_if_not_exists(self):
-        """Create BigQuery dataset if it doesn't exist"""
+        """Create BigQuery dataset if it doesn't exist (cached per run)"""
+        if self._dataset_verified:
+            return
         try:
             self.client.get_dataset(self.dataset_ref)
             print(f"Dataset {self.dataset_id} already exists")
         except NotFound:
             dataset = bigquery.Dataset(self.dataset_ref)
-            dataset.location = "US"  # or your preferred location
+            dataset.location = "US"
             dataset = self.client.create_dataset(dataset)
             print(f"Created dataset {self.dataset_id}")
+        self._dataset_verified = True
     
     def create_external_table(self, table_name: str, gcs_path: str, 
                              schema: list = None, file_format: str = 'CSV'):
@@ -94,49 +99,58 @@ class BigQueryManager:
     # NOTA: Código de analytical views removido - movido a PLAN.md sección "Next Steps"
     # Las views necesitan ser rediseñadas con la estructura actual de datos
     
-    def load_dataframe_to_table(self, df, table_name: str, write_disposition: str = 'WRITE_APPEND', 
+    def get_cached_schema(self, table_name: str, schema: list, write_disposition: str) -> list:
+        """Get reconciled schema from cache, or compute and cache it"""
+        if not schema:
+            return None
+
+        cache_key = f"{table_name}:{write_disposition}"
+        if cache_key in self._schema_cache:
+            return self._schema_cache[cache_key]
+
+        if write_disposition == 'WRITE_APPEND':
+            resolved = self.schema_reconciler.get_safe_schema_for_incremental(table_name, schema)
+        else:
+            resolved = self.schema_reconciler._make_all_nullable(schema)
+
+        self._schema_cache[cache_key] = resolved
+        print(f"🔒 Schema resolved for {table_name}: {len(resolved)} fields")
+        return resolved
+
+    def load_dataframe_to_table(self, df, table_name: str, write_disposition: str = 'WRITE_APPEND',
                                schema: list = None):
         """Load pandas DataFrame directly to BigQuery table with proper schema"""
         try:
             table_id = f"{self.config.GCP_PROJECT_ID}.{self.dataset_id}.{table_name}"
-            
-            # Reconcile schema if table exists and we're appending
-            if schema and write_disposition == 'WRITE_APPEND':
-                schema = self.schema_reconciler.get_safe_schema_for_incremental(table_name, schema)
-            elif schema and write_disposition == 'WRITE_TRUNCATE':
-                # For full refresh, make all fields NULLABLE for safety
-                schema = self.schema_reconciler._make_all_nullable(schema)
-            
+
+            # Use cached schema reconciliation (1 API call per table, not per chunk)
+            resolved_schema = self.get_cached_schema(table_name, schema, write_disposition)
+
             # Configure job settings
-            if schema:
-                # Use explicit schema - FORCE disable autodetect
+            if resolved_schema:
                 job_config = bigquery.LoadJobConfig(
                     write_disposition=write_disposition,
-                    schema=schema,
+                    schema=resolved_schema,
                     autodetect=False,
-                    source_format=bigquery.SourceFormat.CSV,  # Force explicit format
-                    skip_leading_rows=0,  # No header row to skip
+                    source_format=bigquery.SourceFormat.CSV,
+                    skip_leading_rows=0,
                     allow_quoted_newlines=True,
                     allow_jagged_rows=False,
-                    max_bad_records=0  # Fail on any schema mismatch
+                    max_bad_records=0
                 )
-                print(f"🔒 FORCING explicit schema with {len(schema)} fields")
-                print(f"Schema fields: {[f.name + ':' + f.field_type for f in schema[:5]]}...")
             else:
-                # Use autodetect when no schema provided
                 job_config = bigquery.LoadJobConfig(
                     write_disposition=write_disposition,
                     autodetect=True
                 )
-                print("Using autodetect for schema")
-            
+
             # Load DataFrame
             job = self.client.load_table_from_dataframe(df, table_id, job_config=job_config)
-            job.result()  # Wait for the job to complete
-            
+            job.result()
+
             print(f"Loaded {len(df)} rows to {table_id}")
             return job
-            
+
         except Exception as e:
             print(f"Error loading DataFrame to {table_name}: {str(e)}")
             raise

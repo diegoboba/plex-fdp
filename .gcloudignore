@@ -1,0 +1,19 @@
+# .gcloudignore - Exclude from Cloud Functions deployment
+.git/
+.gitignore
+.env
+*.log
+logs/
+plex-env/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.vscode/
+.idea/
+*.md
+etl-service-account-key.json
+debug_*.py
+scripts/
+config/mysql_structure.yaml

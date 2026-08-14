@@ -151,11 +151,14 @@ class StreamingDataExtractor:
                                        truncate_target: bool = False, initial_offset: int = None) -> int:
         """Extract data from MySQL table and load directly to BigQuery in chunks"""
         
-        # Special handling for reccabecera and reclineas tables - use ID-based incremental
-        if table_name.lower() in ['reccabecera', 'reclineas'] and not truncate_target:
-            return self._extract_rec_table_incremental(
-                database_name, table_name, bq_table_name, chunk_size
-            )
+        # ID-based incremental: check config for id_column
+        table_config = self.get_table_strategy(database_name, table_name)
+        if table_config.get('strategy') == 'id_incremental' and not truncate_target:
+            id_column = table_config.get('id_column')
+            if id_column:
+                return self._extract_id_based_incremental(
+                    database_name, table_name, bq_table_name, chunk_size, id_column
+                )
         
         # Detect if this is incremental processing
         is_incremental = query and 'WHERE' in query.upper() and ('DATE_SUB' in query.upper() or 'INTERVAL' in query.upper())
@@ -175,8 +178,12 @@ class StreamingDataExtractor:
         print(f"Retrieving schema for {database_name}.{table_name}...")
         mysql_columns = self.db.get_table_schema(database_name, table_name)
         
-        # Print schema comparison for debugging
-        SchemaMapper.print_schema_comparison(f"{database_name}.{table_name}", mysql_columns)
+        # Schema comparison only on first table of the run (reduce logging cost)
+        if not hasattr(self, '_schema_printed'):
+            self._schema_printed = set()
+        if database_name not in self._schema_printed:
+            SchemaMapper.print_schema_comparison(f"{database_name}.{table_name}", mysql_columns)
+            self._schema_printed.add(database_name)
         
         # Skip MySQL structure documentation update to avoid full table counts
         # This was causing timeouts on large tables like asientos_detalle
@@ -272,9 +279,7 @@ class StreamingDataExtractor:
                         print(f"No more data at chunk {chunk_num + 1}, stopping")
                     break
                 
-                # If we got a full chunk and row count was unknown, continue
-                if len(chunk_df) == chunk_size and total_rows == -1:
-                    print(f"📦 Full chunk received, continuing to next chunk...")
+                # If we got a full chunk and row count was unknown, continue silently
                 
                 # Convert timedelta columns to string for BigQuery TIME fields
                 for col in chunk_df.columns:
@@ -282,32 +287,28 @@ class StreamingDataExtractor:
                         chunk_df[col] = chunk_df[col].apply(
                             lambda x: str(x).split(' ')[-1] if pd.notna(x) else None
                         )
-                        print(f"Converted timedelta column {col} to TIME string format")
-                
+
                 # Clean data: remove null bytes and other problematic characters for BigQuery
                 for col in chunk_df.columns:
                     if chunk_df[col].dtype == 'object':  # String/text columns
-                        # First clean null bytes and encoding issues
                         chunk_df[col] = chunk_df[col].astype(str).str.replace('\x00', '', regex=False)
                         chunk_df[col] = chunk_df[col].str.encode('utf-8', errors='ignore').str.decode('utf-8')
-                        # Replace various null representations with actual None
                         chunk_df[col] = chunk_df[col].replace(['nan', 'None', 'null', 'NULL', ''], None)
-                        # Convert back to object dtype to handle None properly
                         chunk_df[col] = chunk_df[col].where(chunk_df[col].notna(), None)
-                
+
                 # Load chunk directly to BigQuery with proper schema
                 write_disposition = 'WRITE_TRUNCATE' if chunk_num == 0 and truncate_target else 'WRITE_APPEND'
-                
-                # ALWAYS use schema (not just first chunk) - BigQuery needs it for consistency
+
                 self.bq_manager.load_dataframe_to_table(
-                    chunk_df, bq_table_name, 
+                    chunk_df, bq_table_name,
                     write_disposition=write_disposition,
-                    schema=bq_schema  # Always use schema!
+                    schema=bq_schema
                 )
-                
+
                 total_loaded += len(chunk_df)
-                chunk_display = f"{chunk_num + 1}/{total_chunks}" if total_chunks != float('inf') else f"{chunk_num + 1}"
-                print(f"Loaded chunk {chunk_display}: {len(chunk_df):,} rows (total: {total_loaded:,})")
+                # Only log every 5 chunks or last chunk to reduce Cloud Logging cost
+                if chunk_num % 5 == 0 or len(chunk_df) < chunk_size:
+                    print(f"Loaded chunk {chunk_num + 1}: {len(chunk_df):,} rows (total: {total_loaded:,})")
                 
                 # Increment chunk counter
                 chunk_num += 1
@@ -325,39 +326,38 @@ class StreamingDataExtractor:
             print(f"✅ Completed streaming extraction: {total_loaded:,} total rows loaded to {bq_table_name}")
         return total_loaded
     
-    def _extract_rec_table_incremental(self, database_name: str, table_name: str, 
-                                        bq_table_name: str, chunk_size: int) -> int:
-        """Special incremental extraction for reccabecera/reclineas using MAX(IDReceta)"""
-        print(f"🔑 Starting special ID-based incremental extraction for {table_name}")
-        
-        # Get the last idreceta from BigQuery
+    def _extract_id_based_incremental(self, database_name: str, table_name: str,
+                                        bq_table_name: str, chunk_size: int,
+                                        id_column: str = "IDReceta") -> int:
+        """Generic ID-based incremental extraction using MAX(id_column) from BigQuery"""
+        print(f"🔑 Starting ID-based incremental extraction for {table_name} (column: {id_column})")
+
+        # Get the last id from BigQuery
         max_id_query = f"""
-        SELECT COALESCE(MAX(IDReceta), 0) as max_id 
+        SELECT COALESCE(MAX({id_column}), 0) as max_id
         FROM `{self.config.BIGQUERY_PROJECT}.{self.config.BIGQUERY_DATASET}.{bq_table_name}`
         """
-        
+
         try:
-            print(f"📊 Getting MAX(IDReceta) from BigQuery...")
+            print(f"📊 Getting MAX({id_column}) from BigQuery...")
             query_job = self.bq_manager.client.query(max_id_query)
             result = query_job.result()
-            
+
             max_id = 0
             for row in result:
                 max_id = row.max_id
-            
-            print(f"✅ Last exported IDReceta: {max_id:,}")
-            
-            # Check if table exists and has data
+
+            print(f"✅ Last exported {id_column}: {max_id:,}")
+
             if max_id == 0:
-                print(f"⚠️  No data found in BigQuery table {bq_table_name} - starting from IDReceta > 0")
+                print(f"⚠️  No data found in BigQuery table {bq_table_name} - starting from {id_column} > 0")
         except Exception as e:
-            # Table might not exist
-            print(f"⚠️  Could not get MAX(IDReceta) from BigQuery (table might not exist): {e}")
-            print(f"📋 Starting fresh extraction from IDReceta > 0")
+            print(f"⚠️  Could not get MAX({id_column}) from BigQuery (table might not exist): {e}")
+            print(f"📋 Starting fresh extraction from {id_column} > 0")
             max_id = 0
-        
-        # Build MySQL query using the indexed IDReceta column
-        mysql_query = f"SELECT * FROM {table_name} WHERE IDReceta > {max_id}"
+
+        # Build MySQL query using the indexed id column
+        mysql_query = f"SELECT * FROM {table_name} WHERE {id_column} > {max_id}"
         print(f"🔍 MySQL query: {mysql_query}")
         
         # Create dataset if it doesn't exist
@@ -385,7 +385,7 @@ class StreamingDataExtractor:
         
         while True:
             offset = chunk_num * chunk_size
-            chunk_query = f"{mysql_query} ORDER BY IDReceta LIMIT {chunk_size} OFFSET {offset}"
+            chunk_query = f"{mysql_query} ORDER BY {id_column} LIMIT {chunk_size} OFFSET {offset}"
             
             print(f"Processing chunk {chunk_num + 1} (offset: {offset:,})")
             
@@ -406,31 +406,26 @@ class StreamingDataExtractor:
                         chunk_df[col] = chunk_df[col].apply(
                             lambda x: str(x).split(' ')[-1] if pd.notna(x) else None
                         )
-                        print(f"Converted timedelta column {col} to TIME string format")
-                
+
                 # Clean data: remove null bytes and other problematic characters for BigQuery
                 for col in chunk_df.columns:
                     if chunk_df[col].dtype == 'object':  # String/text columns
-                        # First clean null bytes and encoding issues
                         chunk_df[col] = chunk_df[col].astype(str).str.replace('\x00', '', regex=False)
                         chunk_df[col] = chunk_df[col].str.encode('utf-8', errors='ignore').str.decode('utf-8')
-                        # Replace various null representations with actual None
                         chunk_df[col] = chunk_df[col].replace(['nan', 'None', 'null', 'NULL', ''], None)
-                        # Convert back to object dtype to handle None properly
                         chunk_df[col] = chunk_df[col].where(chunk_df[col].notna(), None)
-                
-                # Always append for reccabecera (never truncate)
+
                 write_disposition = 'WRITE_APPEND'
-                
-                # Load chunk directly to BigQuery with proper schema
+
                 self.bq_manager.load_dataframe_to_table(
-                    chunk_df, bq_table_name, 
+                    chunk_df, bq_table_name,
                     write_disposition=write_disposition,
                     schema=bq_schema
                 )
-                
+
                 total_loaded += len(chunk_df)
-                print(f"Loaded chunk {chunk_num + 1}: {len(chunk_df):,} rows (total: {total_loaded:,})")
+                if chunk_num % 5 == 0 or len(chunk_df) < chunk_size:
+                    print(f"Loaded chunk {chunk_num + 1}: {len(chunk_df):,} rows (total: {total_loaded:,})")
                 
                 # Increment chunk counter
                 chunk_num += 1
@@ -493,24 +488,23 @@ class StreamingDataExtractor:
                     delete_condition = None
                     truncate_target = True
                     print(f"🔄 Using FULL REFRESH")
+                elif strategy == 'id_incremental':
+                    id_column = table_config.get('id_column')
+                    print(f"🔑 Using ID-based incremental for {table_name} (column: {id_column})")
+                    mysql_query = None  # Will be handled by _extract_id_based_incremental
+                    delete_condition = None
+                    truncate_target = False
                 else:
-                    # Special handling for reccabecera and reclineas - no DELETE, uses ID-based incremental
-                    if table_name.lower() in ['reccabecera', 'reclineas']:
-                        print(f"🔑 Using special ID-based incremental for {table_name} (no DELETE)")
-                        mysql_query = None  # Will be handled by special method
-                        delete_condition = None
-                        truncate_target = False
-                    else:
-                        mysql_query, delete_condition = self.build_incremental_query(
-                            database_name, table_name, table_config, lookback_days
-                        )
-                        truncate_target = False
-                        print(f"⚡ Using INCREMENTAL (DELETE + INSERT last {lookback_days} days)")
-                        print(f"🔍 MySQL Query: {mysql_query[:100]}...")
-                        
-                        # Delete incremental data from BigQuery BEFORE loading new data
-                        if delete_condition:
-                            self.delete_incremental_data_from_bigquery(bq_table_name, delete_condition)
+                    mysql_query, delete_condition = self.build_incremental_query(
+                        database_name, table_name, table_config, lookback_days
+                    )
+                    truncate_target = False
+                    print(f"⚡ Using INCREMENTAL (DELETE + INSERT last {lookback_days} days)")
+                    print(f"🔍 MySQL Query: {mysql_query[:100]}...")
+
+                    # Delete incremental data from BigQuery BEFORE loading new data
+                    if delete_condition:
+                        self.delete_incremental_data_from_bigquery(bq_table_name, delete_condition)
                 
                 # Extract and load data
                 rows_loaded = self.extract_and_load_table_streaming(
@@ -554,15 +548,98 @@ class StreamingDataExtractor:
             self.mysql_count_timeout = min(mysql_timeout, 10)
             print(f"⏱️ Using custom MySQL timeout: {mysql_timeout} seconds")
         
-        # Define table groups
+        # Define table groups - aligned with Cloud Scheduler jobs
+        # Each group is sized to complete within Cloud Run timeout (1800s)
         table_groups = {
+            # Group 1: Heaviest transactional tables with JOINs (~15-20 min incremental)
+            'heavy_transactions': [
+                'plex.factcabecera',
+                'plex.factlineas',
+                'plex.asientos',
+                'plex.asientos_detalle',
+            ],
+            # Group 2: Medium transactional tables (~10-15 min incremental)
+            'medium_transactions': [
+                'plex.factpagos',
+                'plex.factlineascostos',
+                'plex.factcoberturas',
+                'plex.factreglasaplicadas',
+                'plex.factlineasbonificaciones',
+                'plex.factlineasptesentrega',
+                'plex.reccabecera',
+                'plex.reclineas',
+            ],
+            # Group 3: Operational tables - app, orders, purchases (~10 min)
+            'operational': [
+                'plex.apppedidos',
+                'plex.apppedidoslineas',
+                'plex.apppedidosmovimientos',
+                'plex.apppedidospagos',
+                'plex.apppedidoslineasfact',
+                'plex.apppedidosestados',
+                'plex.apppedidosorigenes',
+                'plex.pedidos',
+                'plex.pedidoslineas',
+                'plex.comprascabecera',
+                'plex.comprasdetalle',
+                'plex.pagosproveedores',
+                'plex.clientes',
+            ],
+            # Group 4: Catalogs, stock, master data, plex small tables (~10 min)
+            'catalogs': [
+                'plex.medicamentos',
+                'plex.stock',
+                'plex.stocklotes',
+                'plex.categorizedproducts',
+                'plex.ciudades',
+                'plex.planes',
+                'plex.laboratorios',
+                'plex.cuentascontables',
+                'plex.obsociales',
+                'plex.proveedores',
+                'plex.operadores',
+                'plex.gastos',
+                'plex.clasificadores',
+                'plex.categories',
+                'plex.categorias',
+                'plex.subrubros',
+                'plex.sucursales',
+                'plex.empresas',
+                'plex.rubros',
+            ],
+            # Group 5: All Quantio tables (~15-20 min due to factlineas 6.2M)
+            'quantio': [
+                'quantio.factcabecera',
+                'quantio.factlineas',
+                'quantio.productoscostos',
+                'quantio.pedidosfaltantes',
+                'quantio.compraslineas',
+                'quantio.stocklotes',
+                'quantio.ordenescompralineas',
+                'quantio.recepcioncompraslineas',
+                'quantio.productoscodebars',
+                'quantio.productos',
+                'quantio.productosproveedores',
+                'quantio.comprascabecera',
+                'quantio.stock',
+                'quantio.comprasarchivos',
+                'quantio.laboratorios',
+                'quantio.proveedores',
+                'quantio.iibb_tipooperaciones',
+                'quantio.clientes',
+                'quantio.subrubros',
+                'quantio.comprobantes_proveedores',
+                'quantio.tiposdegastos',
+                'quantio.rubros',
+            ],
+            # Legacy group names (kept for backwards compatibility)
             'high_priority': [
                 'plex.factcabecera',
-                'plex.factlineas', 
+                'plex.factlineas',
                 'plex.asientos',
                 'plex.asientos_detalle',
                 'plex.reccabecera',
-                'plex.reclineas'
+                'plex.reclineas',
             ],
             'medium_priority': [
                 'plex.factpagos',
@@ -572,7 +649,7 @@ class StreamingDataExtractor:
                 'plex.factreglasaplicadas',
                 'plex.medicamentos',
                 'plex.stock',
-                'plex.clientes'
+                'plex.clientes',
             ],
             'low_priority': [
                 'plex.pedidoslineas',
@@ -582,7 +659,7 @@ class StreamingDataExtractor:
                 'plex.pagosproveedores',
                 'plex.apppedidos',
                 'plex.apppedidoslineas',
-                'plex.apppedidosmovimientos'
+                'plex.apppedidosmovimientos',
             ],
             'master_data': [
                 'plex.ciudades',
@@ -598,8 +675,8 @@ class StreamingDataExtractor:
                 'plex.categorias',
                 'plex.sucursales',
                 'plex.empresas',
-                'plex.rubros'
-            ]
+                'plex.rubros',
+            ],
         }
         
         # Get tables for the specified group
@@ -698,12 +775,10 @@ class StreamingDataExtractor:
                     watermark_columns = [watermark_columns]
                 
                 # Build WHERE conditions for delete
+                # Always use DATE() wrapper to handle both DATE and TIMESTAMP columns in BigQuery
                 conditions = []
                 for col in watermark_columns:
-                    if 'fecha' in col.lower() or 'date' in col.lower() or 'emision' in col.lower():
-                        conditions.append(f"{col} >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)")
-                    else:
-                        conditions.append(f"DATE({col}) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)")
+                    conditions.append(f"DATE({col}) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)")
                 
                 # Combine conditions with OR
                 bq_delete_condition = " OR ".join(f"({cond})" for cond in conditions)

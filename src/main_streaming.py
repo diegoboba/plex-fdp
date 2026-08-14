@@ -6,7 +6,6 @@ except ImportError:
     print("⚠️  functions_framework not available - running in local mode")
 
 from .etl.streaming_extractor import StreamingDataExtractor
-from .cloud.bigquery import BigQueryManager
 from .utils.logging_helper import ETLLogger
 from datetime import datetime
 import sys
@@ -40,13 +39,13 @@ def run_streaming_etl_pipeline(lookback_days: int = 3, force_full_refresh: bool 
         if initial_offset:
             print(f"Starting from offset: {initial_offset:,} rows")
         
+        streaming_extractor = None
         try:
             # Initialize components with timeout if provided
             streaming_extractor = StreamingDataExtractor(mysql_timeout=mysql_timeout)
-            bq_manager = BigQueryManager()
-            
-            # Step 1: Extract and load data directly to BigQuery (streaming)
-            print("Step 1: Extracting and loading data to BigQuery (streaming)...")
+
+            # Extract and load data directly to BigQuery (streaming)
+            print("Extracting and loading data to BigQuery (streaming)...")
             
             if single_table:
                 # Process single table only
@@ -102,45 +101,95 @@ def run_streaming_etl_pipeline(lookback_days: int = 3, force_full_refresh: bool 
             print(f"Streaming ETL pipeline failed: {str(e)}")
             # Re-raise the exception so the context manager logs it properly
             raise
+        finally:
+            # Always close MySQL connections to avoid "too many connections"
+            if streaming_extractor:
+                streaming_extractor.db.close_all()
 
 if CLOUD_FUNCTIONS_AVAILABLE:
     @functions_framework.http
     def streaming_etl_cloud_function(request):
-        """Cloud Function entry point for HTTP triggers (streaming version)"""
+        """Cloud Function entry point for HTTP triggers (streaming version)
+
+        Used by Cloud Scheduler (HTTP target) to trigger ETL groups.
+        Accepts JSON body with parameters:
+            lookback_days (int): Days to look back for incremental (default: 5)
+            force_full_refresh (bool): Force full refresh (default: False)
+            chunk_size (int): Override chunk size (default: None)
+            table_group (str): Process only specified group (default: None)
+        """
         try:
-            # Parse request data
             request_json = request.get_json(silent=True)
-            lookback_days = 3
-            force_full_refresh = False
-            
-            if request_json:
-                lookback_days = request_json.get('lookback_days', 3)
-                force_full_refresh = request_json.get('force_full_refresh', False)
-            
-            # Run the streaming ETL pipeline
-            result = run_streaming_etl_pipeline(lookback_days=lookback_days, force_full_refresh=force_full_refresh)
-            
-            return result, 200 if result['status'] == 'success' else 500
-            
+            params = request_json or {}
+
+            print(f"Scheduled streaming ETL triggered at {datetime.now()}")
+            if params:
+                print(f"Received params: {params}")
+
+            lookback_days = params.get('lookback_days', 5)
+            force_full_refresh = params.get('force_full_refresh', False)
+            chunk_size = params.get('chunk_size', None)
+            table_group = params.get('table_group', None)
+
+            result = run_streaming_etl_pipeline(
+                lookback_days=lookback_days,
+                force_full_refresh=force_full_refresh,
+                chunk_size=chunk_size,
+                table_group=table_group
+            )
+
+            print(f"Scheduled streaming ETL result: {result}")
+            status_code = 200 if result['status'] == 'success' else 500
+            return result, status_code
+
         except Exception as e:
+            error_msg = f"Cloud Function error: {str(e)}"
+            print(error_msg)
             return {
                 "status": "error",
-                "message": f"Cloud Function error: {str(e)}",
+                "message": error_msg,
                 "timestamp": datetime.now().isoformat()
             }, 500
 
     @functions_framework.cloud_event
     def streaming_etl_scheduled_function(cloud_event):
-        """Cloud Function entry point for scheduled triggers (streaming version)"""
+        """Cloud Function entry point for scheduled triggers (streaming version)
+
+        Accepts parameters via Pub/Sub message payload:
+            lookback_days (int): Days to look back for incremental (default: 5)
+            force_full_refresh (bool): Force full refresh (default: False)
+            chunk_size (int): Override chunk size (default: None)
+            table_group (str): Process only specified group (default: None)
+        """
+        import base64
+        import json
+
         try:
             print(f"Scheduled streaming ETL triggered at {datetime.now()}")
-            
-            # Run incremental ETL by default for scheduled runs (3 days lookback)
-            result = run_streaming_etl_pipeline(lookback_days=3, force_full_refresh=False)
-            
+
+            # Parse parameters from Pub/Sub message
+            params = {}
+            if cloud_event.data and "message" in cloud_event.data:
+                message_data = cloud_event.data["message"].get("data", "")
+                if message_data:
+                    params = json.loads(base64.b64decode(message_data))
+                    print(f"Received params from Pub/Sub: {params}")
+
+            lookback_days = params.get('lookback_days', 5)
+            force_full_refresh = params.get('force_full_refresh', False)
+            chunk_size = params.get('chunk_size', None)
+            table_group = params.get('table_group', None)
+
+            result = run_streaming_etl_pipeline(
+                lookback_days=lookback_days,
+                force_full_refresh=force_full_refresh,
+                chunk_size=chunk_size,
+                table_group=table_group
+            )
+
             print(f"Scheduled streaming ETL result: {result}")
             return result
-            
+
         except Exception as e:
             error_msg = f"Scheduled streaming ETL failed: {str(e)}"
             print(error_msg)
@@ -168,8 +217,10 @@ if __name__ == "__main__":
     parser.add_argument('--table', type=str, help='Process only this specific table (format: database.table, e.g., plex.factcabecera or quantio.productos)')
     parser.add_argument('--mysql_timeout', type=int, help='MySQL query timeout in seconds (default: 300 for data queries, 5 for counts). Example: 600 for 10 minutes')
     parser.add_argument('--initial_offset', type=int, help='Starting row offset for data extraction (useful for resuming failed loads). Example: 3000000 to skip first 3M rows')
-    parser.add_argument('--table_group', type=str, choices=['high_priority', 'medium_priority', 'low_priority', 'master_data'],
-                       help='Process only tables in specified group. high_priority includes critical transactional tables')
+    parser.add_argument('--table_group', type=str,
+                       choices=['heavy_transactions', 'medium_transactions', 'operational', 'catalogs', 'quantio',
+                                'high_priority', 'medium_priority', 'low_priority', 'master_data'],
+                       help='Process only tables in specified group. Groups: heavy_transactions (factcabecera/lineas, asientos), medium_transactions (factpagos/costos/coberturas, rec*), operational (app*, pedidos, compras, clientes), catalogs (plex master data), quantio (all quantio tables)')
     
     args = parser.parse_args()
     

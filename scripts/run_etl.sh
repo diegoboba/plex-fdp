@@ -4,10 +4,10 @@
 # Run daily incremental ETL
 
 # Set working directory
-cd /Users/bobix/code/plex/plex-fdp
+cd /Users/bobalabs/code/plex-fdp
 
 # Set environment variables
-export GOOGLE_APPLICATION_CREDENTIALS="/Users/bobix/code/plex/plex-fdp/etl-service-account-key.json"
+export GOOGLE_APPLICATION_CREDENTIALS="/Users/bobalabs/code/plex-fdp/etl-service-account-key.json"
 export GCP_PROJECT_ID="plex-etl-project"
 
 # Create log directory if it doesn't exist
@@ -19,9 +19,12 @@ LOG_FILE="logs/etl_cron_${TIMESTAMP}.log"
 
 echo "Starting ETL at $(date)" >> "$LOG_FILE"
 
+# Use Python from virtual environment
+PYTHON_VENV="/Users/bobalabs/code/plex-fdp/plex-env/bin/python"
+
 # Run incremental ETL (last 3 days of data)
-python -m src.main_streaming \
-    --lookback_days 2 \
+"$PYTHON_VENV" -m src.main_streaming \
+    --lookback_days 5 \
     --mysql_timeout 3000 \
     >> "$LOG_FILE" 2>&1
 

@@ -19,5 +19,5 @@ openpyxl==3.1.2
 # black==24.8.0
 # pylint==3.2.6
 
-# Cloud logging (opcional para production)
-# google-cloud-logging==3.11.0
+# Cloud logging
+google-cloud-logging==3.11.0

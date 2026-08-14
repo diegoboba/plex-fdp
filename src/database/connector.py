@@ -11,41 +11,81 @@ class DatabaseConnector:
         self.project_id = project_id or os.getenv('GCP_PROJECT_ID')
         if not self.project_id:
             raise ValueError("GCP_PROJECT_ID must be set in environment or passed as parameter")
-        
+
         self.secret_manager = SecretManager(self.project_id)
-        self._connections = {}  # Cache connections
-    
+        self._connections = {}  # Persistent connection cache per database
+        self._configs = {}  # Cache DB configs to avoid repeated Secret Manager calls
+
+    def __del__(self):
+        """Cleanup connections on garbage collection"""
+        if hasattr(self, '_connections'):
+            self.close_all()
+
+    def _get_or_create_connection(self, database_name: str, read_timeout: int = None):
+        """Get existing connection or create new one. Reuses connections per database."""
+        actual_read_timeout = read_timeout if read_timeout else 300
+
+        # Check if we have a cached connection that's still alive
+        if database_name in self._connections:
+            conn = self._connections[database_name]
+            try:
+                conn.ping(reconnect=False)
+                return conn
+            except Exception:
+                print(f"🔄 Connection to {database_name} lost, reconnecting...")
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                del self._connections[database_name]
+
+        # Create new connection
+        conn = self._create_connection(database_name, actual_read_timeout)
+        self._connections[database_name] = conn
+        return conn
+
+    def _create_connection(self, database_name: str, read_timeout: int = 300):
+        """Create a fresh MySQL connection"""
+        # Cache config to avoid repeated Secret Manager calls
+        if database_name not in self._configs:
+            self._configs[database_name] = self.secret_manager.get_mysql_config(database_name)
+
+        config = self._configs[database_name]
+
+        connection = pymysql.connect(
+            host=config['host'],
+            port=int(config['port']),
+            user=config['user'],
+            password=config['password'],
+            database=config['database'],
+            charset='utf8',
+            cursorclass=pymysql.cursors.DictCursor,
+            autocommit=True,
+            connect_timeout=30,
+            read_timeout=read_timeout,
+            write_timeout=300
+        )
+
+        print(f"Connected to {database_name} database")
+        return connection
+
     def get_mysql_connection(self, database_name: str, read_timeout: int = None):
-        """Create connection to MySQL database using Secret Manager"""
+        """Get a MySQL connection (reuses existing connection when possible)"""
         try:
-            # Get configuration from Secret Manager
-            config = self.secret_manager.get_mysql_config(database_name)
-            
-            # Use custom read_timeout if provided, otherwise default to 300
-            actual_read_timeout = read_timeout if read_timeout else 300
-            if read_timeout:
-                print(f"⏱️ Using MySQL read timeout: {actual_read_timeout} seconds")
-            
-            connection = pymysql.connect(
-                host=config['host'],
-                port=int(config['port']),
-                user=config['user'],
-                password=config['password'],
-                database=config['database'],
-                charset='utf8',
-                cursorclass=pymysql.cursors.DictCursor,
-                autocommit=True,
-                connect_timeout=30,  # Reduced from 60s
-                read_timeout=actual_read_timeout,
-                write_timeout=300
-            )
-            
-            print(f"Successfully connected to {database_name} database")
-            return connection
-            
+            return self._get_or_create_connection(database_name, read_timeout)
         except Exception as e:
             print(f"Error connecting to {database_name} database: {str(e)}")
             raise
+
+    def close_all(self):
+        """Close all cached connections"""
+        for db_name, conn in self._connections.items():
+            try:
+                conn.close()
+                print(f"Closed connection to {db_name}")
+            except Exception:
+                pass
+        self._connections.clear()
     
     def test_connection(self, database_name: str) -> bool:
         """Test connection to database"""
@@ -64,32 +104,29 @@ class DatabaseConnector:
     
     def get_table_info(self, database_name: str, table_name: str) -> Dict[str, Any]:
         """Get table information (schema only - NO ROW COUNT to avoid timeouts)"""
-        connection = None
         try:
             connection = self.get_mysql_connection(database_name)
-            
+
             with connection.cursor() as cursor:
                 # Get table schema
                 cursor.execute(f"DESCRIBE {table_name}")
                 schema = cursor.fetchall()
-                
+
                 # Get sample data
                 cursor.execute(f"SELECT * FROM {table_name} LIMIT 5")
                 sample_data = cursor.fetchall()
-                
+
             return {
                 'table_name': table_name,
                 'database': database_name,
                 'schema': schema,
                 'sample_data': sample_data
             }
-            
+
         except Exception as e:
+            self._connections.pop(database_name, None)
             print(f"Error getting table info for {database_name}.{table_name}: {str(e)}")
             raise
-        finally:
-            if connection:
-                connection.close()
     
     def extract_table_data(self, database_name: str, table_name: str, 
                           query: Optional[str] = None, limit: Optional[int] = None,
@@ -168,8 +205,10 @@ class DatabaseConnector:
                 return df
                 
             except (pymysql.err.OperationalError, pymysql.err.InterfaceError) as e:
-                if "timeout" in str(e).lower() or "lost connection" in str(e).lower():
-                    print(f"Timeout error on attempt {attempt + 1}: {str(e)}")
+                # Invalidate cached connection on connection errors
+                self._connections.pop(database_name, None)
+                if "timeout" in str(e).lower() or "lost connection" in str(e).lower() or "too many connections" in str(e).lower():
+                    print(f"Connection error on attempt {attempt + 1}: {str(e)}")
                     if attempt < max_retries - 1:
                         wait_time = 2 ** attempt  # Exponential backoff
                         print(f"Retrying in {wait_time} seconds...")
@@ -182,10 +221,6 @@ class DatabaseConnector:
                     time.sleep(2)
                     continue
                 raise
-            finally:
-                if connection:
-                    connection.close()
-                    connection = None
     
     def _extract_table_data_chunked(self, database_name: str, table_name: str, 
                                    query: Optional[str] = None, chunk_size: int = 50000,
@@ -237,40 +272,36 @@ class DatabaseConnector:
     
     def list_tables(self, database_name: str) -> list:
         """List all tables in database"""
-        connection = None
         try:
             connection = self.get_mysql_connection(database_name)
-            
+
             with connection.cursor() as cursor:
                 cursor.execute("SHOW TABLES")
                 results = cursor.fetchall()
-                
+
                 # Get the column name (it varies by MySQL version/config)
                 if results:
                     column_key = list(results[0].keys())[0]
                     tables = [row[column_key] for row in results]
                 else:
                     tables = []
-                
+
             print(f"Tables in {database_name}: {tables}")
             return tables
-            
+
         except Exception as e:
+            self._connections.pop(database_name, None)
             print(f"Error listing tables in {database_name}: {str(e)}")
             raise
-        finally:
-            if connection:
-                connection.close()
     
     def get_table_schema(self, database_name: str, table_name: str) -> List[Dict]:
         """Get detailed schema information for a table"""
-        connection = None
         try:
             connection = self.get_mysql_connection(database_name)
-            
+
             # Query INFORMATION_SCHEMA to get column details
             schema_query = """
-            SELECT 
+            SELECT
                 COLUMN_NAME,
                 DATA_TYPE,
                 COLUMN_TYPE,
@@ -280,55 +311,27 @@ class DatabaseConnector:
                 CHARACTER_MAXIMUM_LENGTH,
                 NUMERIC_PRECISION,
                 NUMERIC_SCALE
-            FROM INFORMATION_SCHEMA.COLUMNS 
+            FROM INFORMATION_SCHEMA.COLUMNS
             WHERE TABLE_SCHEMA = %s AND TABLE_NAME = %s
             ORDER BY ORDINAL_POSITION
             """
-            
+
             with connection.cursor() as cursor:
                 # Get the actual database name we're connected to
                 cursor.execute("SELECT DATABASE() as current_db")
                 current_db_result = cursor.fetchone()
                 actual_database = current_db_result['current_db']
-                
-                print(f"Executing schema query with actual_database='{actual_database}', table='{table_name}'")
+
                 cursor.execute(schema_query, (actual_database, table_name))
                 columns = cursor.fetchall()
-                
+
             print(f"Retrieved schema for {database_name}.{table_name}: {len(columns)} columns")
-            
-            # Debug: if no columns found, let's check what tables exist
-            if len(columns) == 0:
-                print(f"⚠️  No columns found! Let's debug...")
-                with connection.cursor() as cursor:
-                    # Check what database we're actually connected to
-                    cursor.execute("SELECT DATABASE() as current_db")
-                    current_db = cursor.fetchone()
-                    print(f"Current database: {current_db}")
-                    
-                    # Check what tables exist in this database
-                    cursor.execute("SHOW TABLES")
-                    tables = cursor.fetchall()
-                    print(f"Available tables: {[list(t.values())[0] for t in tables[:5]]}")  # Show first 5
-                    
-                    # Try to describe the table directly
-                    try:
-                        cursor.execute(f"DESCRIBE {table_name}")
-                        describe_result = cursor.fetchall()
-                        print(f"DESCRIBE {table_name}: {len(describe_result)} columns")
-                        if len(describe_result) > 0:
-                            print(f"First few columns: {describe_result[:3]}")
-                    except Exception as e:
-                        print(f"DESCRIBE failed: {e}")
-            
             return columns
-            
+
         except Exception as e:
+            self._connections.pop(database_name, None)
             print(f"Error getting schema for {database_name}.{table_name}: {str(e)}")
             raise
-        finally:
-            if connection:
-                connection.close()
 
 
 # Test function for development

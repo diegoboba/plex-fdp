@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Logging helper to capture print statements and save to log files
+Logging helper to capture print statements and save to log files.
+Supports Cloud Logging when running in Google Cloud Functions.
 """
 
 import sys
@@ -8,6 +9,26 @@ import logging
 from datetime import datetime
 from io import StringIO
 import os
+
+
+def is_cloud_environment():
+    """Detect if running inside Google Cloud Functions / Cloud Run"""
+    return os.environ.get('K_SERVICE') is not None or os.environ.get('FUNCTION_TARGET') is not None
+
+
+def setup_cloud_logging():
+    """Initialize Google Cloud Logging integration.
+
+    When running in GCP, this routes all Python logging to Cloud Logging
+    with structured JSON format for better filtering in Logs Explorer.
+    """
+    try:
+        import google.cloud.logging
+        client = google.cloud.logging.Client()
+        client.setup_logging()
+        logging.info("Cloud Logging initialized successfully")
+    except Exception as e:
+        logging.warning(f"Could not initialize Cloud Logging, using default: {e}")
 
 
 class TeeOutput:
@@ -48,41 +69,50 @@ class ETLLogger:
         self.log_filename = None
         
     def setup_logging(self):
-        """Setup comprehensive logging system"""
-        # Create logs directory
+        """Setup comprehensive logging system.
+
+        In Cloud environments: uses Cloud Logging (structured JSON).
+        Locally: writes to file + console as before.
+        """
+        if is_cloud_environment():
+            setup_cloud_logging()
+            logging.basicConfig(level=logging.INFO, force=True)
+            self.logger = logging.getLogger('etl_pipeline')
+            self.logger.info("ETL Pipeline Started (Cloud)", extra={
+                "etl_prefix": self.log_prefix,
+            })
+            # In cloud, stdout already goes to Cloud Logging — no file/tee needed
+            return self.logger
+
+        # --- Local mode: file + console ---
         log_dir = "logs"
         if not os.path.exists(log_dir):
             os.makedirs(log_dir)
-        
-        # Generate log filename with timestamp
+
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.log_filename = f"{log_dir}/{self.log_prefix}_{timestamp}.log"
-        
-        # Configure logging
+
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
             handlers=[
                 logging.FileHandler(self.log_filename, encoding='utf-8')
             ],
-            force=True  # Reset any previous logging configuration
+            force=True
         )
-        
-        # Create logger
+
         self.logger = logging.getLogger('etl_pipeline')
-        
-        # Log the start
+
         self.logger.info("="*80)
         self.logger.info(f"ETL Pipeline Started - {datetime.now()}")
         self.logger.info(f"Log file: {self.log_filename}")
         self.logger.info("="*80)
-        
-        # Setup stdout redirection to capture all prints
+
         self.original_stdout = sys.stdout
         sys.stdout = TeeOutput(self.logger)
-        
-        print(f"📝 Logging to: {self.log_filename}")
-        
+
+        print(f"Logging to: {self.log_filename}")
+
         return self.logger
     
     def restore_stdout(self):
@@ -92,16 +122,15 @@ class ETLLogger:
     
     def log_completion(self, success=True, error_msg=None):
         """Log pipeline completion"""
-        self.logger.info("="*80)
         if success:
             self.logger.info(f"ETL Pipeline Completed Successfully - {datetime.now()}")
         else:
             self.logger.error(f"ETL Pipeline Failed - {datetime.now()}")
             if error_msg:
                 self.logger.error(f"Error: {error_msg}")
-        self.logger.info("="*80)
-        
-        print(f"📄 Full log saved to: {self.log_filename}")
+
+        if self.log_filename:
+            print(f"Full log saved to: {self.log_filename}")
     
     def __enter__(self):
         """Context manager entry"""

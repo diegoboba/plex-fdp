@@ -50,9 +50,17 @@ incremental_strategies:
     default_lookback_days: 3
     configurable_lookback: true
     operation_sequence:
-      1: "DELETE FROM BigQuery WHERE date_column >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)" 
+      1: "DELETE FROM BigQuery WHERE date_column >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)"
       2: "SELECT FROM MySQL WHERE date_column >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)"
       3: "INSERT INTO BigQuery"
+
+  id_incremental:
+    description: "Append-only using MAX(id_column) from BigQuery as watermark"
+    method: "append_new_ids"
+    operation_sequence:
+      1: "SELECT MAX(id_column) FROM BigQuery table"
+      2: "SELECT FROM MySQL WHERE id_column > max_id ORDER BY id_column"
+      3: "APPEND INTO BigQuery"
 
 # Database configurations
 databases:
@@ -168,8 +176,8 @@ databases:
         watermark_column: ["FechaHora"]  # From asientos via JOIN
         lookback_days: 3
         chunk_size: 50000
-        description: "33M rows, 2GB - Accounting entries detail - HIGHEST PRIORITY"
-        estimated_rows: 33129282
+        description: "39.7M rows, 2GB - Accounting entries detail - HIGHEST PRIORITY"
+        estimated_rows: 39696786
         custom_query: |
           SELECT ad.* 
           FROM asientos_detalle ad
@@ -203,8 +211,8 @@ databases:
         watermark_column: ["FechaHora"]
         lookback_days: 3
         chunk_size: 50000
-        description: "13.7M rows, 1.2GB - Accounting entries - CRITICAL"
-        estimated_rows: 13703449
+        description: "16.4M rows, 1.2GB - Accounting entries - CRITICAL"
+        estimated_rows: 16362567
         
       factcabecera:
         strategy: "date_incremental"
@@ -251,28 +259,11 @@ databases:
         
       # HIGH-VOLUME TABLES (1M-10M rows) - Standard incremental
       reclineas:
-        strategy: "date_incremental"
-        watermark_column: ["FechaEmision", "FechaPrescripcion", "FechaDispensacion", "FechaAutorizacion"]  # From reccabecera via JOIN
-        lookback_days: 3
+        strategy: "id_incremental"
+        id_column: "IDReceta"
         chunk_size: 100000
-        description: "6.2M rows, 0.57GB - Receipt lines"
+        description: "6.2M rows, 0.57GB - Receipt lines - ID-based append"
         estimated_rows: 6185059
-        custom_query: |
-          SELECT rl.* 
-          FROM reclineas rl
-          INNER JOIN reccabecera rc ON rl.IDReceta = rc.IDReceta 
-          WHERE (rc.FechaEmision IS NOT NULL AND DATE(rc.FechaEmision) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-             OR (rc.FechaPrescripcion IS NOT NULL AND rc.FechaPrescripcion >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-             OR (rc.FechaDispensacion IS NOT NULL AND rc.FechaDispensacion >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-             OR (rc.FechaAutorizacion IS NOT NULL AND rc.FechaAutorizacion >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-        delete_condition: |
-          WHERE IDReceta IN (
-            SELECT IDReceta FROM `plex-etl-project.plex_analytics.plex_reccabecera` 
-            WHERE (FechaEmision IS NOT NULL AND FechaEmision >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-               OR (FechaPrescripcion IS NOT NULL AND FechaPrescripcion >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-               OR (FechaDispensacion IS NOT NULL AND FechaDispensacion >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-               OR (FechaAutorizacion IS NOT NULL AND FechaAutorizacion >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-          )
         
       factcoberturas:
         strategy: "date_incremental"
@@ -295,27 +286,15 @@ databases:
         strategy: "full_refresh"
         refresh_frequency: "every_run"
         chunk_size: 100000
-        description: "4.7M rows, 0.88GB - Stock lots - FULL REFRESH ALWAYS"
-        estimated_rows: 4741990
+        description: "5.4M rows, 1GB - Stock lots - FULL REFRESH (reduced chunk for 2GB mem)"
+        estimated_rows: 5366438
         
       reccabecera:
-        strategy: "date_incremental"
-        watermark_column: ["FechaEmision", "FechaPrescripcion", "FechaDispensacion", "FechaAutorizacion"]
-        lookback_days: 3
+        strategy: "id_incremental"
+        id_column: "IDReceta"
         chunk_size: 100000
-        description: "4.4M rows, 5.4GB - Receipt headers"
+        description: "4.4M rows, 5.4GB - Receipt headers - ID-based append"
         estimated_rows: 4425988
-        custom_query: |
-          SELECT * FROM reccabecera 
-          WHERE (FechaEmision IS NOT NULL AND FechaEmision >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-             OR (FechaPrescripcion IS NOT NULL AND FechaPrescripcion >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-             OR (FechaDispensacion IS NOT NULL AND FechaDispensacion >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-             OR (FechaAutorizacion IS NOT NULL AND FechaAutorizacion >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-        delete_condition: |
-          WHERE (FechaEmision IS NOT NULL AND FechaEmision >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-             OR (FechaPrescripcion IS NOT NULL AND FechaPrescripcion >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-             OR (FechaDispensacion IS NOT NULL AND FechaDispensacion >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-             OR (FechaAutorizacion IS NOT NULL AND FechaAutorizacion >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
         
       factreglasaplicadas:
         strategy: "date_incremental"
@@ -340,56 +319,76 @@ databases:
         strategy: "full_refresh"
         refresh_frequency: "every_run"
         chunk_size: 100000
-        description: "773K rows, 0.2GB - Medications catalog - FULL REFRESH ALWAYS"
+        description: "773K rows, 0.2GB - Medications catalog - FULL REFRESH (reduced chunk for 2GB mem)"
         estimated_rows: 772746
         
       pedidoslineas:
         strategy: "full_refresh"
         refresh_frequency: "every_run"
-        chunk_size: 100000
-        description: "982K rows, 0.1GB - Order lines - FULL REFRESH ALWAYS"
+        chunk_size: 200000
+        description: "982K rows, 0.1GB - Order lines - FULL REFRESH"
         estimated_rows: 982148
         
       factlineasbonificaciones:
-        strategy: "full_refresh"
-        refresh_frequency: "every_run"
+        strategy: "date_incremental"
+        watermark_column: ["Emision"]
         chunk_size: 100000
-        description: "863K rows, 0.04GB - Invoice line bonuses - FULL REFRESH ALWAYS"
+        description: "863K rows, 0.04GB - Invoice line bonuses"
         estimated_rows: 863349
+        custom_query: |
+          SELECT flb.*
+          FROM factlineasbonificaciones flb
+          INNER JOIN factcabecera fc ON flb.IDComprobante = fc.IDComprobante
+          WHERE fc.Emision >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
+        delete_condition: |
+          WHERE IDComprobante IN (
+            SELECT IDComprobante FROM `plex-etl-project.plex_analytics.plex_factcabecera`
+            WHERE Emision >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
+          )
         
       stock:
         strategy: "full_refresh"
         refresh_frequency: "every_run"
-        chunk_size: 100000
-        description: "623K rows, 0.05GB - Stock levels - FULL REFRESH ALWAYS"
-        estimated_rows: 622917
+        chunk_size: 200000
+        description: "623K rows, 0.05GB - Stock levels - FULL REFRESH"
+        estimated_rows: 623582
         
       comprascabecera:
         strategy: "full_refresh"
         refresh_frequency: "every_run"
-        chunk_size: 100000
-        description: "400K rows, 0.1GB - Purchase headers - FULL REFRESH ALWAYS"
+        chunk_size: 200000
+        description: "400K rows, 0.1GB - Purchase headers - FULL REFRESH"
         estimated_rows: 399997
         
       comprasdetalle:
         strategy: "full_refresh"
         refresh_frequency: "every_run"
-        chunk_size: 100000
-        description: "463K rows, 0.055GB - Purchase details - FULL REFRESH ALWAYS"
+        chunk_size: 250000
+        description: "463K rows, 0.055GB - Purchase details - FULL REFRESH"
         estimated_rows: 462657
         
       factlineasptesentrega:
-        strategy: "full_refresh"
-        refresh_frequency: "every_run"
+        strategy: "date_incremental"
+        watermark_column: ["Emision"]
         chunk_size: 100000
-        description: "288K rows, 0.03GB - Invoice delivery points - FULL REFRESH ALWAYS"
+        description: "288K rows, 0.03GB - Invoice delivery points"
         estimated_rows: 287978
+        custom_query: |
+          SELECT fpe.*
+          FROM factlineasptesentrega fpe
+          INNER JOIN factcabecera fc ON fpe.IDComprobante = fc.IDComprobante
+          WHERE fc.Emision >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
+        delete_condition: |
+          WHERE IDComprobante IN (
+            SELECT IDComprobante FROM `plex-etl-project.plex_analytics.plex_factcabecera`
+            WHERE Emision >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
+          )
         
       pagosproveedores:
         strategy: "full_refresh"
         refresh_frequency: "every_run"
-        chunk_size: 100000
-        description: "250K rows, 0.006GB - Supplier payments - FULL REFRESH ALWAYS"
+        chunk_size: 250000
+        description: "250K rows, 0.006GB - Supplier payments - FULL REFRESH"
         estimated_rows: 249757
         
       clientes:
@@ -410,14 +409,13 @@ databases:
       categorizedproducts:
         strategy: "full_refresh"
         refresh_frequency: "every_run"
-        chunk_size: 100000
-        description: "170K rows, 0.003GB - Categorized products - FULL REFRESH ALWAYS"
+        chunk_size: 200000
+        description: "170K rows, 0.003GB - Categorized products (2 cols) - FULL REFRESH"
         estimated_rows: 170286
         
       apppedidosmovimientos:
-        strategy: "full_refresh"
-        refresh_frequency: "every_run"
-        watermark_column: ["Fecha", "FechaEstado"]  # From apppedidos via JOIN
+        strategy: "date_incremental"
+        watermark_column: ["Fecha", "FechaEstado"]
         lookback_days: 3
         chunk_size: 50000
         description: "160K rows, 0.009GB - App order movements"
@@ -427,18 +425,17 @@ databases:
           FROM apppedidosmovimientos apm
           INNER JOIN apppedidos ap ON apm.IDPedido = ap.IDPedido 
           WHERE (ap.Fecha IS NOT NULL AND DATE(ap.Fecha) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-             OR (ap.FechaEstado IS NOT NULL AND ap.FechaEstado >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
+             OR (ap.FechaEstado IS NOT NULL AND DATE(ap.FechaEstado) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
         delete_condition: |
           WHERE IDPedido IN (
-            SELECT IDPedido FROM `plex-etl-project.plex_analytics.plex_apppedidos` 
+            SELECT IDPedido FROM `plex-etl-project.plex_analytics.plex_apppedidos`
             WHERE (Fecha IS NOT NULL AND DATE(Fecha) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-               OR (FechaEstado IS NOT NULL AND FechaEstado >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
+               OR (FechaEstado IS NOT NULL AND DATE(FechaEstado) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
           )
-        
+
       apppedidoslineas:
-        strategy: "full_refresh"
-        refresh_frequency: "every_run"
-        watermark_column: ["Fecha", "FechaEstado"]  # From apppedidos via JOIN
+        strategy: "date_incremental"
+        watermark_column: ["Fecha", "FechaEstado"]
         lookback_days: 3
         chunk_size: 50000
         description: "110K rows, 0.006GB - App order lines"
@@ -448,26 +445,25 @@ databases:
           FROM apppedidoslineas apl
           INNER JOIN apppedidos ap ON apl.IDPedido = ap.IDPedido 
           WHERE (ap.Fecha IS NOT NULL AND DATE(ap.Fecha) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-             OR (ap.FechaEstado IS NOT NULL AND ap.FechaEstado >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
+             OR (ap.FechaEstado IS NOT NULL AND DATE(ap.FechaEstado) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
         delete_condition: |
           WHERE IDPedido IN (
-            SELECT IDPedido FROM `plex-etl-project.plex_analytics.plex_apppedidos` 
+            SELECT IDPedido FROM `plex-etl-project.plex_analytics.plex_apppedidos`
             WHERE (Fecha IS NOT NULL AND DATE(Fecha) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-               OR (FechaEstado IS NOT NULL AND FechaEstado >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
+               OR (FechaEstado IS NOT NULL AND DATE(FechaEstado) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
           )
-        
+
       apppedidos:
-        strategy: "full_refresh"
-        refresh_frequency: "every_run"
+        strategy: "date_incremental"
         watermark_column: ["Fecha", "FechaEstado"]
         lookback_days: 3
         chunk_size: 50000
         description: "63K rows, 0.012GB - App orders"
         estimated_rows: 63170
         custom_query: |
-          SELECT * FROM apppedidos 
+          SELECT * FROM apppedidos
           WHERE (Fecha IS NOT NULL AND DATE(Fecha) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-             OR (FechaEstado IS NOT NULL AND FechaEstado >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
+             OR (FechaEstado IS NOT NULL AND DATE(FechaEstado) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
         delete_condition: |
           WHERE (Fecha IS NOT NULL AND DATE(Fecha) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
              OR (FechaEstado IS NOT NULL AND DATE(FechaEstado) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
@@ -494,24 +490,23 @@ databases:
         estimated_rows: 8885
         
       apppedidospagos:
-        strategy: "full_refresh"
-        refresh_frequency: "every_run"
-        watermark_column: ["Fecha", "FechaEstado"]  # From apppedidos via JOIN
+        strategy: "date_incremental"
+        watermark_column: ["Fecha", "FechaEstado"]
         lookback_days: 3
         chunk_size: 50000
         description: "7K rows, 0.0005GB - App order payments"
         estimated_rows: 7184
         custom_query: |
-          SELECT app.* 
+          SELECT app.*
           FROM apppedidospagos app
-          INNER JOIN apppedidos ap ON app.IDPedido = ap.IDPedido 
+          INNER JOIN apppedidos ap ON app.IDPedido = ap.IDPedido
           WHERE (ap.Fecha IS NOT NULL AND DATE(ap.Fecha) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-             OR (ap.FechaEstado IS NOT NULL AND ap.FechaEstado >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
+             OR (ap.FechaEstado IS NOT NULL AND DATE(ap.FechaEstado) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
         delete_condition: |
           WHERE IDPedido IN (
-            SELECT IDPedido FROM `plex-etl-project.plex_analytics.plex_apppedidos` 
+            SELECT IDPedido FROM `plex-etl-project.plex_analytics.plex_apppedidos`
             WHERE (Fecha IS NOT NULL AND DATE(Fecha) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
-               OR (FechaEstado IS NOT NULL AND FechaEstado >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
+               OR (FechaEstado IS NOT NULL AND DATE(FechaEstado) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY))
           )
         
       pedidos:
@@ -531,8 +526,8 @@ databases:
       cuentascontables:
         strategy: "full_refresh"
         refresh_frequency: "every_run"
-        description: "2.2K rows - Chart of accounts - REFRESH EVERY RUN"
-        estimated_rows: 2242
+        description: "2.3K rows - Chart of accounts - REFRESH EVERY RUN"
+        estimated_rows: 2268
         
       obsociales:
         strategy: "full_refresh"
@@ -614,27 +609,153 @@ databases:
         
   quantio:
     priority_tables:
+      # QUANTIO HIGH-VOLUME TABLES
+      factlineas:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        chunk_size: 250000
+        description: "6.2M rows - Invoice line items - FULL REFRESH"
+        estimated_rows: 6152762
+
+      productoscostos:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        chunk_size: 250000
+        description: "2M rows - Product costs - FULL REFRESH"
+        estimated_rows: 2001664
+
+      pedidosfaltantes:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        chunk_size: 250000
+        description: "989K rows - Missing product orders - FULL REFRESH"
+        estimated_rows: 989351
+
+      factcabecera:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        chunk_size: 100000
+        description: "261K rows, 51 cols - Invoice headers - FULL REFRESH (reduced chunk for 2GB mem)"
+        estimated_rows: 261058
+
+      compraslineas:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        chunk_size: 250000
+        description: "224K rows - Purchase lines - FULL REFRESH"
+        estimated_rows: 223924
+
       # QUANTIO MEDIUM-VOLUME TABLES
       stocklotes:
         strategy: "full_refresh"
         refresh_frequency: "every_run"
         chunk_size: 100000
-        description: "157K rows, 0.009GB - Stock lots - FULL REFRESH ALWAYS"
-        estimated_rows: 156751
-        
+        description: "176K rows - Stock lots - FULL REFRESH"
+        estimated_rows: 175752
+
+      ordenescompralineas:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        chunk_size: 100000
+        description: "111K rows - Purchase order lines - FULL REFRESH"
+        estimated_rows: 111141
+
+      recepcioncompraslineas:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        chunk_size: 100000
+        description: "108K rows - Purchase reception lines - FULL REFRESH"
+        estimated_rows: 108265
+
+      productoscodebars:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        chunk_size: 100000
+        description: "98K rows - Product barcodes - FULL REFRESH"
+        estimated_rows: 97693
+
       productos:
         strategy: "full_refresh"
         refresh_frequency: "every_run"
         chunk_size: 100000
-        description: "92K rows, 0.03GB - Products catalog - FULL REFRESH ALWAYS"
+        description: "92K rows - Products catalog - FULL REFRESH"
         estimated_rows: 91512
-        
+
+      productosproveedores:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        chunk_size: 100000
+        description: "39K rows - Product suppliers - FULL REFRESH"
+        estimated_rows: 38835
+
+      comprascabecera:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        chunk_size: 100000
+        description: "23K rows - Purchase headers - FULL REFRESH"
+        estimated_rows: 23083
+
       stock:
         strategy: "full_refresh"
         refresh_frequency: "every_run"
         chunk_size: 100000
-        description: "19K rows, 0.001GB - Stock levels - FULL REFRESH ALWAYS"
-        estimated_rows: 19245
+        description: "20K rows - Stock levels - FULL REFRESH"
+        estimated_rows: 20390
+
+      comprasarchivos:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        description: "6.7K rows - Purchase files - FULL REFRESH"
+        estimated_rows: 6665
+
+      # QUANTIO SMALL TABLES
+      laboratorios:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        description: "1.4K rows - Laboratories - FULL REFRESH"
+        estimated_rows: 1378
+
+      proveedores:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        description: "1.3K rows - Suppliers - FULL REFRESH"
+        estimated_rows: 1280
+
+      iibb_tipooperaciones:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        description: "111 rows - IIBB operation types - FULL REFRESH"
+        estimated_rows: 111
+
+      clientes:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        description: "47 rows - Clients - FULL REFRESH"
+        estimated_rows: 47
+
+      subrubros:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        description: "18 rows - Sub-categories - FULL REFRESH"
+        estimated_rows: 18
+
+      comprobantes_proveedores:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        description: "13 rows - Supplier vouchers - FULL REFRESH"
+        estimated_rows: 13
+
+      tiposdegastos:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        description: "8 rows - Expense types - FULL REFRESH"
+        estimated_rows: 8
+
+      rubros:
+        strategy: "full_refresh"
+        refresh_frequency: "every_run"
+        description: "4 rows - Categories - FULL REFRESH"
+        estimated_rows: 4
 
 # Watermark tracking configuration  
 watermark_tracking:
