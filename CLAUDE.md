@@ -39,7 +39,8 @@ Sistema ETL para farmacéuticas que extrae datos de MySQL (Plex/Quantio) y los c
 
 #### 5. **BigQuery Management (`src/cloud/bigquery.py`)**
 - Schema enforcement (autodetect=False)
-- Vistas analíticas automatizadas
+- **Schema cache** per table per run (avoids repeated get_table API calls per chunk)
+- **Dataset existence cache** (checked once per run, not per table)
 - Configuración explícita de formatos de carga
 
 ## 🔧 Critical Fixes Applied
@@ -77,18 +78,72 @@ Sistema ETL para farmacéuticas que extrae datos de MySQL (Plex/Quantio) y los c
   3. Extracción continua hasta EOF (sin límite de chunks)
 - **Result**: Tablas grandes se procesan completamente sin importar timeouts
 
+### **Problem 7: Pub/Sub Redelivery Causing Duplicate Executions**
+- **Issue**: Pub/Sub ack deadline max = 600s, but catalogs/quantio groups take 1-2h. Pub/Sub redelivered messages every 10min, spawning duplicate Cloud Function instances all day
+- **Solution**: Switched from Pub/Sub trigger to HTTP trigger. Cloud Scheduler calls the function HTTP endpoint directly with OIDC auth. No Pub/Sub = no redelivery.
+- **Result**: Single execution per group, no duplicates. Cloud Run timeout 3600s, Scheduler attempt-deadline 1800s, max-retry-attempts=0.
+
+### **Problem 8: Excessive BigQuery API Calls & Cloud Costs (~$40/mo)**
+- **Issue**: Schema reconciliation called `get_table()` 2x per chunk (not per table), dataset existence checked per table (not per run), verbose logging on every chunk → high Cloud Logging + API costs. Function overprovisioned at 4GB/2vCPU.
+- **Solution**:
+  1. Schema cache in `BigQueryManager._schema_cache` — reconcile once per table, reuse for all chunks
+  2. Dataset check cached via `_dataset_verified` flag — 1 API call per run instead of 66
+  3. Chunk logging reduced to every 5th chunk
+  4. Cloud Function downsized from 4GB/2vCPU to 2GB/1vCPU
+- **Result**: ~97% fewer BigQuery API calls, ~80% less Cloud Logging volume, ~50% compute cost reduction. Projected $40/mo → ~$20-25/mo.
+
+### **Problem 9: Catalogs Group OOM — Stock Tables Not Updating (2026-04-06)**
+- **Issue**: After downsizing to 2GB on 2026-03-18, the `catalogs` group crashed with OOM (`Memory limit of 1907 MiB exceeded`). `medicamentos` (63 cols × 400K chunk) was the first table and blew the memory limit, killing the container before processing stock/stocklotes/sucursales. Tables frozen since March 18. Reported by Quiroga (delpuentefarmacias) on March 31.
+- **Solution**:
+  1. Reduced chunk_size for wide/large full_refresh tables: medicamentos 400K→100K, stocklotes 500K→100K, stock 400K→200K, pedidoslineas 500K→200K
+  2. Manual full refresh of 4 stock tables from local machine
+  3. Redeployed Cloud Function with updated config
+- **Result**: All 4 tables updated (stock 624K, stocklotes 5.4M, medicamentos 774K, sucursales 22). Pending verification of automated run on 2026-04-07.
+
+### **Problem 10: Missed Run + lookback=2 Orphans a Whole Day (2026-08-12)**
+- **Issue**: `reporte_ventas` showed only 2 sucursales (43 comprobantes) for Sat 2026-08-08 instead of 16 (4,591). Reported by Crosa via the Power BI dashboard.
+- **Root cause (two chained faults)**:
+  1. **The source MySQL consolidates a day's data 24-48h late.** At 1 AM on D+1, day D is still nearly empty (only the 1-2 sucursales that sync live). Day D only becomes complete in MySQL after the D+2 run reads it. `lookback_days=2` was exactly wide enough for this to work — with zero margin.
+  2. **The Mon 2026-08-10 `heavy-transactions` run never executed.** Cloud Run aborted it at startup: `The request was aborted because there was no available instance` → HTTP 500, and `--max-retry-attempts=0` meant no retry. The Tue 08-11 run only looked back to 08-09, so **Saturday 08-08 was never revisited**.
+- **Diagnosis note**: IDComprobante is assigned chronologically at the source, so contiguous ID ranges per day make gaps trivially visible — `MAX(IDComprobante)` of day D+1 minus `MIN` of day D reveals exactly how many rows are missing.
+- **Solution**:
+  1. Manual reprocess with `--lookback_days 6` for heavy/medium/operational groups
+  2. `lookback_days` 2 → **5** for the three transactional groups (margin for 3 missed runs; catalogs/quantio stay at 2)
+  3. `--max-retry-attempts=3 --min-backoff=60s` on heavy/medium/operational **only** — these finish in <10 min, far under the 1800s attempt deadline, so a retry fires only on a real failure. Catalogs/quantio deliberately stay at 0: they routinely exceed the deadline (504) and a retry would spawn a duplicate run (see Problem 7)
+  4. New Sunday catch-up jobs `plex-etl-{heavy,medium,operational}-catchup` at 1:00/1:20/1:40 AM with `lookback_days=8`, repairing any hole from the prior week
+- **Result**: 08-08 and 08-11 restored. Total damage found May→Aug: 9,934 comprobantes, 99.9% of it in those two days.
+
 ## 📊 Current Status
 
+### **Cloud Deployment (Active since 2026-03-15)**
+- ✅ Cloud Function `plex-etl-streaming-daily` deployed (gen2, **1vCPU/2GB**, 1h timeout)
+- ✅ 5 Scheduler groups running Mon-Sat incremental (lookback_days=2)
+- ✅ **HTTP trigger** (no Pub/Sub) — eliminates redelivery/duplicate executions
+- ✅ Connection reuse (1 persistent connection per DB)
+- ✅ Full refresh verified: 146M rows, 66 tables, reporte_ventas continuo
+- ✅ **Cost optimized** (2026-03-18): schema caching, reduced logging, downsized compute
+- ✅ **OOM fix** (2026-04-06): reduced chunk_size for catalogs group (medicamentos 100K, stocklotes 100K) — pending verification 2026-04-07
+- ⏳ Biweekly full refresh via Cloud Run Job (pending setup, ~$4.50/mo)
+
+### **Schedule (Argentina time, Mon-Sat)**
+| Time | Job | Tables |
+|------|-----|--------|
+| 1:00 AM | heavy-transactions | factcabecera, factlineas, asientos, asientos_detalle |
+| 1:20 AM | medium-transactions | factpagos, factcostos, factcoberturas, rec* |
+| 1:40 AM | operational | app*, pedidos, compras, clientes |
+| 2:00 AM | catalogs | plex master data, stock |
+| 2:20 AM | quantio | all 22 quantio tables |
+
 ### **Working Tables**
-- ✅ `plex_factcabecera` - 9.2M filas, tipos correctos
+- ✅ All plex + quantio tables loading correctly
 - ✅ Schema auto-documentado en `mysql_structure.yaml`
-- ✅ Chunks de 100k funcionando
+- ✅ Chunks de 100k-250k funcionando
 - ✅ Incremental ETL por fecha
 
 ### **Architecture Benefits**
 - **Performance**: ~3x más rápido que ETL tradicional (sin Cloud Storage)
 - **Cost**: Menor costo (sin almacenamiento intermedio)
-- **Reliability**: Schema consistency automática
+- **Reliability**: Schema consistency automática + connection reuse
 - **Monitoring**: Auto-documentación de estructura
 
 ## 🛠️ Commands
@@ -151,19 +206,12 @@ python -c "from src.utils.mysql_structure_generator import MySQLStructureGenerat
 
 ## 🔄 Next Steps
 
-### **Critical Business Logic (HIGHEST Priority)**
-1. **Define Incremental Strategy** per table:
-   - **Master Data Tables** (full copy always): sucursales, medicamentos
-   - **Transactional Tables** (incremental): factcabecera, factlineas
-   - **Reference Tables** (hybrid): clientes, productos
-2. **Identify Incremental Columns** for each table:
-   - Verify `emision`, `fecha_modificacion` columns exist
-   - Check data quality and completeness of timestamp fields
-   - Define fallback strategies for tables without timestamps
-3. **Design Watermark Management**:
-   - Where to store last extraction timestamps (BigQuery table? Secret Manager?)
-   - How to handle multiple incremental columns per table
-   - Failure recovery strategies (restart from last successful point)
+### **Biweekly Full Refresh (HIGHEST Priority)**
+1. **Set up Cloud Run Job** for automated full refresh (1st and 15th of each month, 1:00 AM ARG)
+   - Cloud Function can't handle it (30min timeout, full refresh takes ~14h)
+   - Cloud Run Job runs `scripts/full_refresh.sh` (staging dataset pattern)
+   - Estimated cost: ~$4.50/month (2 vCPU, 4GB, ~14h × 2 runs)
+   - Need: Dockerfile, Cloud Run Job config, Cloud Scheduler trigger
 
 ### **Immediate Cleanup**
 4. Remove deprecated `create_typed_views.py`
@@ -192,8 +240,7 @@ python -c "from src.utils.mysql_structure_generator import MySQLStructureGenerat
 - Configuration scattered across files
 
 ### **Performance**
-- Could optimize for very large tables (>10M rows)
-- Parallel processing for multiple tables
+- Parallel processing for multiple tables (currently sequential)
 - Connection pooling for high-frequency runs
 
 ## 🔐 Security Notes
@@ -219,6 +266,6 @@ python -c "from src.utils.mysql_structure_generator import MySQLStructureGenerat
 
 ---
 
-**Last Updated**: 2025-08-17  
-**Status**: ✅ Core streaming ETL funcionando con tipos correctos  
-**Next Session**: Cleanup y optimización de código
+**Last Updated**: 2026-04-06
+**Status**: ✅ Cloud ETL active Mon-Sat, 5 groups, lookback=2, optimized 1vCPU/2GB, chunk sizes reduced for catalogs OOM fix
+**Next Session**: Verify catalogs group completes without OOM on 2026-04-07 + biweekly full refresh via Cloud Run Job
