@@ -249,11 +249,12 @@ class StreamingDataExtractor:
             if total_chunks != float('inf') and chunk_num >= total_chunks:
                 break
                 
-            # Use actual_offset for the first iteration if resuming, otherwise calculate normally
-            if initial_offset and chunk_num == (initial_offset // chunk_size):
-                offset = actual_offset
+            # chunk_num already starts at initial_offset // chunk_size when resuming,
+            # so only the chunks processed since the resume point advance the offset
+            if initial_offset:
+                offset = initial_offset + (chunk_num - (initial_offset // chunk_size)) * chunk_size
             else:
-                offset = initial_offset + (chunk_num * chunk_size) if initial_offset else chunk_num * chunk_size
+                offset = chunk_num * chunk_size
             
             # Build chunked query
             if query is None:
@@ -281,20 +282,7 @@ class StreamingDataExtractor:
                 
                 # If we got a full chunk and row count was unknown, continue silently
                 
-                # Convert timedelta columns to string for BigQuery TIME fields
-                for col in chunk_df.columns:
-                    if chunk_df[col].dtype == 'timedelta64[ns]':
-                        chunk_df[col] = chunk_df[col].apply(
-                            lambda x: str(x).split(' ')[-1] if pd.notna(x) else None
-                        )
-
-                # Clean data: remove null bytes and other problematic characters for BigQuery
-                for col in chunk_df.columns:
-                    if chunk_df[col].dtype == 'object':  # String/text columns
-                        chunk_df[col] = chunk_df[col].astype(str).str.replace('\x00', '', regex=False)
-                        chunk_df[col] = chunk_df[col].str.encode('utf-8', errors='ignore').str.decode('utf-8')
-                        chunk_df[col] = chunk_df[col].replace(['nan', 'None', 'null', 'NULL', ''], None)
-                        chunk_df[col] = chunk_df[col].where(chunk_df[col].notna(), None)
+                chunk_df = self._prepare_chunk(chunk_df)
 
                 # Load chunk directly to BigQuery with proper schema
                 write_disposition = 'WRITE_TRUNCATE' if chunk_num == 0 and truncate_target else 'WRITE_APPEND'
@@ -400,20 +388,7 @@ class StreamingDataExtractor:
                     print(f"✅ No more data at chunk {chunk_num + 1} - extraction complete")
                     break
                 
-                # Convert timedelta columns to string for BigQuery TIME fields
-                for col in chunk_df.columns:
-                    if chunk_df[col].dtype == 'timedelta64[ns]':
-                        chunk_df[col] = chunk_df[col].apply(
-                            lambda x: str(x).split(' ')[-1] if pd.notna(x) else None
-                        )
-
-                # Clean data: remove null bytes and other problematic characters for BigQuery
-                for col in chunk_df.columns:
-                    if chunk_df[col].dtype == 'object':  # String/text columns
-                        chunk_df[col] = chunk_df[col].astype(str).str.replace('\x00', '', regex=False)
-                        chunk_df[col] = chunk_df[col].str.encode('utf-8', errors='ignore').str.decode('utf-8')
-                        chunk_df[col] = chunk_df[col].replace(['nan', 'None', 'null', 'NULL', ''], None)
-                        chunk_df[col] = chunk_df[col].where(chunk_df[col].notna(), None)
+                chunk_df = self._prepare_chunk(chunk_df)
 
                 write_disposition = 'WRITE_APPEND'
 
@@ -439,6 +414,255 @@ class StreamingDataExtractor:
         print(f"✅ Completed ID-based incremental extraction for {table_name}: {total_loaded:,} new rows loaded")
         return total_loaded
     
+    # ------------------------------------------------------------------
+    # Shared helpers for chunk preparation
+    # ------------------------------------------------------------------
+    def _resolve_bq_schema(self, database_name: str, table_name: str) -> list:
+        """BigQuery schema from mysql_structure.yaml, falling back to live introspection"""
+        try:
+            bq_schema = self.structure_generator.get_table_schema_for_bigquery(database_name, table_name)
+            if bq_schema:
+                return bq_schema
+        except Exception:
+            pass
+        print("⚠️  Using live schema generation as fallback")
+        mysql_columns = self.db.get_table_schema(database_name, table_name)
+        return SchemaMapper.create_bigquery_schema(mysql_columns)
+
+    @staticmethod
+    def _prepare_chunk(chunk_df: pd.DataFrame) -> pd.DataFrame:
+        """Normalize a MySQL chunk so BigQuery accepts it (TIME fields, null bytes, null-ish strings)"""
+        for col in chunk_df.columns:
+            if chunk_df[col].dtype == 'timedelta64[ns]':
+                chunk_df[col] = chunk_df[col].apply(
+                    lambda x: str(x).split(' ')[-1] if pd.notna(x) else None
+                )
+        for col in chunk_df.columns:
+            if chunk_df[col].dtype == 'object':
+                chunk_df[col] = chunk_df[col].astype(str).str.replace('\x00', '', regex=False)
+                chunk_df[col] = chunk_df[col].str.encode('utf-8', errors='ignore').str.decode('utf-8')
+                chunk_df[col] = chunk_df[col].replace(['nan', 'None', 'null', 'NULL', ''], None)
+                chunk_df[col] = chunk_df[col].where(chunk_df[col].notna(), None)
+        return chunk_df
+
+    def _bq_scalar(self, query: str, default=0):
+        """Run a single-value BigQuery query, returning default on error or NULL"""
+        try:
+            for row in self.bq_manager.client.query(query).result():
+                value = row[0]
+                return default if value is None else value
+        except Exception as e:
+            print(f"⚠️  BigQuery scalar query failed ({e}); using default {default}")
+        return default
+
+    def _mysql_scalar(self, database_name: str, query: str, default=0):
+        """Run a single-value MySQL query"""
+        connection = self.db.get_mysql_connection(database_name, read_timeout=self.mysql_data_timeout)
+        with connection.cursor() as cursor:
+            cursor.execute(query)
+            row = cursor.fetchone()
+        if not row:
+            return default
+        value = list(row.values())[0]
+        return default if value is None else value
+
+    def _load_id_windows(self, database_name: str, table_name: str, bq_table_name: str,
+                         select_sql: str, id_expr: str, lo: int, hi: int, window: int,
+                         bq_schema: list, label: str) -> int:
+        """Stream `select_sql` to BigQuery in windows of `window` ids over (lo, hi].
+
+        `select_sql` must end with a WHERE clause (or `WHERE 1=1`) so the id range can be appended.
+        Windows are keyed on the primary key, so each MySQL query is a cheap PK range scan
+        regardless of how far into the table we are (no OFFSET cost).
+        """
+        if hi <= lo:
+            print(f"   {label}: nothing to load (lo={lo:,} hi={hi:,})")
+            return 0
+
+        total_loaded = 0
+        window_num = 0
+        total_windows = math.ceil((hi - lo) / window)
+        cursor_id = lo
+        while cursor_id < hi:
+            window_hi = min(cursor_id + window, hi)
+            window_num += 1
+            chunk_query = f"{select_sql} AND {id_expr} > {cursor_id} AND {id_expr} <= {window_hi}"
+            try:
+                chunk_df = self.db._extract_table_data_direct(
+                    database_name, table_name, chunk_query,
+                    max_retries=3, timeout=self.mysql_data_timeout
+                )
+                if len(chunk_df) > 0:
+                    chunk_df = self._prepare_chunk(chunk_df)
+                    self.bq_manager.load_dataframe_to_table(
+                        chunk_df, bq_table_name,
+                        write_disposition='WRITE_APPEND',
+                        schema=bq_schema
+                    )
+                    total_loaded += len(chunk_df)
+                if window_num % 5 == 0 or window_hi == hi:
+                    print(f"   {label}: window {window_num}/{total_windows} "
+                          f"({cursor_id:,}-{window_hi:,}] -> {len(chunk_df):,} rows (total {total_loaded:,})")
+            except Exception as e:
+                # A failed window is a data hole: surface it instead of silently moving on
+                print(f"❌ {label}: window ({cursor_id:,}-{window_hi:,}] failed: {e}")
+                raise
+            cursor_id = window_hi
+        return total_loaded
+
+    def _bq_id_list(self, query: str) -> list:
+        """Run a BigQuery query whose first column is an integer id; return the ids sorted"""
+        try:
+            return sorted(int(row[0]) for row in self.bq_manager.client.query(query).result() if row[0] is not None)
+        except Exception as e:
+            print(f"⚠️  BigQuery id-list query failed ({e}); treating as empty")
+            return []
+
+    def _resync_ids(self, database_name: str, table_name: str, bq_table_name: str,
+                    select_sql: str, id_expr: str, id_column: str, ids: list,
+                    bq_schema: list, label: str, batch: int = 5000) -> int:
+        """Delete the given ids from BigQuery and reload them from MySQL, in batches.
+
+        Both sides use PK lookups (`IN (...)` on the id column), so cost is proportional to
+        len(ids), not to table size. Delete and reload share the same literal id list so the
+        two sides can never drift apart within a run.
+        """
+        if not ids:
+            return 0
+        total_loaded = 0
+        batches = math.ceil(len(ids) / batch)
+        for i in range(batches):
+            chunk_ids = ids[i * batch:(i + 1) * batch]
+            id_list = ", ".join(str(x) for x in chunk_ids)
+            self.delete_incremental_data_from_bigquery(bq_table_name, f"WHERE {id_column} IN ({id_list})")
+            chunk_df = self.db._extract_table_data_direct(
+                database_name, table_name, f"{select_sql} AND {id_expr} IN ({id_list})",
+                max_retries=3, timeout=self.mysql_data_timeout
+            )
+            if len(chunk_df) > 0:
+                chunk_df = self._prepare_chunk(chunk_df)
+                self.bq_manager.load_dataframe_to_table(
+                    chunk_df, bq_table_name, write_disposition='WRITE_APPEND', schema=bq_schema
+                )
+                total_loaded += len(chunk_df)
+            print(f"   {label}: batch {i + 1}/{batches} ({len(chunk_ids):,} ids) -> {len(chunk_df):,} rows (total {total_loaded:,})")
+        return total_loaded
+
+    # ------------------------------------------------------------------
+    # hybrid_process strategy (asientos / asientos_detalle)
+    # ------------------------------------------------------------------
+    def _extract_hybrid_process(self, database_name: str, table_name: str,
+                                bq_table_name: str, chunk_size: int, table_config: dict) -> int:
+        """Two-phase load for tables whose rows split into an insert-only, chronological
+        majority and a small, freely-edited minority (identified by a process column).
+
+        Phase A (auto): rows generated by `auto_processes` are insert-only and their PK is
+          chronological, so we load everything with id > MAX(auto id in BigQuery) - id_margin.
+          Pure PK range scans in MySQL — no date filters on unindexed columns.
+        Phase B (manual): every other row (backdated accounting entries, adjustments, etc.)
+          is deleted from BigQuery and reloaded in full. The subset is small (~3% of rows),
+          and this is the only way to catch edits/deletes with arbitrary dates.
+
+        For a child table (asientos_detalle) the process column lives in `parent_table`,
+        so both phases resolve the process through a JOIN, and phase A is capped at the
+        parent's max id in BigQuery so child and parent stay a consistent snapshot.
+        """
+        id_column = table_config['id_column']
+        process_column = table_config['process_column']
+        auto_processes = table_config['auto_processes']
+        id_margin = int(table_config.get('id_margin', 20000))
+        auto_window = int(table_config.get('auto_id_window', chunk_size))
+        manual_window = int(table_config.get('manual_id_window', 1000000))
+        parent_table = table_config.get('parent_table')
+
+        project = self.config.BIGQUERY_PROJECT
+        dataset = self.config.BIGQUERY_DATASET
+        bq_full = f"`{project}.{dataset}.{bq_table_name}`"
+        auto_list = ", ".join(str(p) for p in auto_processes)
+
+        print(f"🔀 HYBRID extraction for {database_name}.{table_name} -> {bq_table_name}")
+        print(f"   auto processes {auto_processes} by {id_column} range | manual subset full reload")
+
+        self.bq_manager.create_dataset_if_not_exists()
+        bq_schema = self._resolve_bq_schema(database_name, table_name)
+
+        # --- Resolve how "auto" / "manual" are expressed in MySQL and BigQuery ---
+        if parent_table:
+            prefix = bq_table_name[:len(bq_table_name) - len(table_name)]  # e.g. "plex_"
+            bq_parent = f"`{project}.{dataset}.{prefix}{parent_table}`"
+            mysql_select = (f"SELECT t.* FROM {table_name} t "
+                            f"INNER JOIN {parent_table} p ON p.{id_column} = t.{id_column} WHERE 1=1")
+            mysql_id_expr = f"t.{id_column}"
+            mysql_manual_filter = f"(p.{process_column} IS NULL OR p.{process_column} NOT IN ({auto_list}))"
+            bq_auto_ids = f"SELECT {id_column} FROM {bq_parent} WHERE {process_column} IN ({auto_list})"
+            bq_max_auto_query = (f"SELECT MAX(c.{id_column}) FROM {bq_full} c "
+                                 f"WHERE c.{id_column} IN ({bq_auto_ids})")
+            bq_manual_delete = f"WHERE {id_column} NOT IN ({bq_auto_ids})"
+            # Cap at the parent snapshot already in BigQuery (parent is loaded first in the group)
+            hi_bound = int(self._bq_scalar(f"SELECT MAX({id_column}) FROM {bq_parent}", 0))
+        else:
+            mysql_select = f"SELECT * FROM {table_name} WHERE 1=1"
+            mysql_id_expr = id_column
+            mysql_manual_filter = f"({process_column} IS NULL OR {process_column} NOT IN ({auto_list}))"
+            bq_max_auto_query = f"SELECT MAX({id_column}) FROM {bq_full} WHERE {process_column} IN ({auto_list})"
+            bq_manual_delete = f"WHERE {process_column} IS NULL OR {process_column} NOT IN ({auto_list})"
+            hi_bound = int(self._mysql_scalar(database_name, f"SELECT MAX({id_column}) FROM {table_name}", 0))
+
+        # ---------------- Phase A: auto rows by id range ----------------
+        max_auto_id = int(self._bq_scalar(bq_max_auto_query, 0))
+        start_id = max(max_auto_id - id_margin, 0)
+        print(f"📍 Phase A (auto): BigQuery max auto {id_column} = {max_auto_id:,} "
+              f"-> reloading ({start_id:,}, {hi_bound:,}]")
+
+        if max_auto_id > 0:
+            self.delete_incremental_data_from_bigquery(bq_table_name, f"WHERE {id_column} > {start_id}")
+        else:
+            print("⚠️  No auto rows in BigQuery yet: phase A will load the whole id range")
+
+        rows_auto = self._load_id_windows(
+            database_name, table_name, bq_table_name,
+            select_sql=mysql_select, id_expr=mysql_id_expr,
+            lo=start_id, hi=hi_bound, window=auto_window,
+            bq_schema=bq_schema, label="auto"
+        )
+        print(f"✅ Phase A (auto): {rows_auto:,} rows loaded")
+
+        # ---------------- Phase C: auto rows BigQuery knows are incomplete ----------------
+        # Some auto rows are born incomplete and finished later (e.g. a cobranza gets its
+        # second line when the payment settles). `stale_ids_query` is a BigQuery query that
+        # returns the ids to re-sync — for asientos: auto asientos whose lines don't balance.
+        rows_stale = 0
+        stale_query = table_config.get('stale_ids_query')
+        if stale_query:
+            stale_query = stale_query.format(project=project, dataset=dataset)
+            stale_ids = self._bq_id_list(
+                f"SELECT {id_column} FROM ({stale_query}) WHERE {id_column} <= {start_id}"
+            )
+            print(f"📍 Phase C (stale auto): {len(stale_ids):,} ids flagged by stale_ids_query")
+            rows_stale = self._resync_ids(
+                database_name, table_name, bq_table_name,
+                select_sql=mysql_select, id_expr=mysql_id_expr, id_column=id_column,
+                ids=stale_ids, bq_schema=bq_schema, label="stale"
+            )
+            print(f"✅ Phase C (stale auto): {rows_stale:,} rows reloaded")
+
+        # ---------------- Phase B: manual subset full reload ----------------
+        print(f"📍 Phase B (manual): reloading every row whose {process_column} is not in {auto_processes}")
+        self.delete_incremental_data_from_bigquery(bq_table_name, bq_manual_delete)
+
+        rows_manual = self._load_id_windows(
+            database_name, table_name, bq_table_name,
+            select_sql=f"{mysql_select} AND {mysql_manual_filter}", id_expr=mysql_id_expr,
+            lo=0, hi=hi_bound, window=manual_window,
+            bq_schema=bq_schema, label="manual"
+        )
+        print(f"✅ Phase B (manual): {rows_manual:,} rows loaded")
+
+        total = rows_auto + rows_stale + rows_manual
+        print(f"✅ Completed HYBRID extraction for {table_name}: {total:,} rows "
+              f"(auto {rows_auto:,} + stale {rows_stale:,} + manual {rows_manual:,})")
+        return total
+
     def _get_query_row_count(self, database_name: str, query: str, table_name: str = None) -> int:
         """DEPRECATED - NO ROW COUNTS TO AVOID TIMEOUTS"""
         print(f"⚠️ _get_query_row_count is deprecated - always returning -1 (unknown count)")
@@ -494,6 +718,13 @@ class StreamingDataExtractor:
                     mysql_query = None  # Will be handled by _extract_id_based_incremental
                     delete_condition = None
                     truncate_target = False
+                elif strategy == 'hybrid_process':
+                    rows_loaded = self._extract_hybrid_process(
+                        database_name, table_name, bq_table_name, chunk_size, table_config
+                    )
+                    results[bq_table_name] = rows_loaded
+                    print(f"✅ Completed {table_name}: {rows_loaded:,} rows loaded")
+                    continue
                 else:
                     mysql_query, delete_condition = self.build_incremental_query(
                         database_name, table_name, table_config, lookback_days
@@ -915,6 +1146,10 @@ class StreamingDataExtractor:
                     truncate_target=True,
                     query=None,
                     initial_offset=initial_offset
+                )
+            elif strategy == 'hybrid_process':
+                rows_loaded = self._extract_hybrid_process(
+                    database_name, table_name, bq_table_name, chunk_size, table_config
                 )
             else:
                 # Special handling for reccabecera and reclineas - no DELETE, uses ID-based incremental

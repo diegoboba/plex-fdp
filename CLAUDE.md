@@ -113,6 +113,18 @@ Sistema ETL para farmacéuticas que extrae datos de MySQL (Plex/Quantio) y los c
   4. New Sunday catch-up jobs `plex-etl-{heavy,medium,operational}-catchup` at 1:00/1:20/1:40 AM with `lookback_days=8`, repairing any hole from the prior week
 - **Result**: 08-08 and 08-11 restored. Total damage found May→Aug: 9,934 comprobantes, 99.9% of it in those two days.
 
+### **Problem 11: asientos / asientos_detalle Incremental Was Slow and Lossy (2026-09-29)**
+- **Issue**: Date-based incremental on `FechaHora` (a) is a full scan — the column is **not indexed** — and (b) never sees the accountant's manual entries, which carry typed dates (1977..2027, month-end closings like "VENTAS ITALIA - DICIEMBRE 2024"). 443 asientos and ~15K detail lines missing. Reported by Crosa; the manual entries hit sales accounts 411100/412100 with large amounts.
+- **Root cause / data facts**: `asientos.IdProcesoAsiento` (indexed) classifies rows. 1 = facturas (9.0M), 5 = cobranzas (8.1M) → 96.5%, insert-only, `IdAsiento` chronological. 2/3/4/NULL (615K asientos, 1.97M lines) are manual, backdated and edited. Cobranzas (5) are born with one line and get the balancing line weeks later (Concepto flips "Cobranza" → "COBRANZA").
+- **Solution**: new `hybrid_process` strategy (`_extract_hybrid_process` in streaming_extractor.py), three phases, all by PK range / PK lookup:
+  1. **Phase A (auto)**: reload `(MAX auto IdAsiento in BQ − 20K, MAX in MySQL]`. Child table capped at the parent's BQ max so both stay a consistent snapshot.
+  2. **Phase C (stale auto)**: `stale_ids_query` (BQ) returns auto asientos whose lines don't balance → delete + reload those ids (~7.7K nightly, batches of 5K).
+  3. **Phase B (manual)**: delete every row whose process ∉ {1,5} (child: whose parent ∉ {1,5}, which also removes orphans) and reload the whole subset in 1M-id windows.
+  - Deletes use the raising variant (`delete_incremental_data_from_bigquery`) so a failed DELETE can never be followed by a duplicate INSERT. Each phase is self-healing on a mid-run crash.
+- **Result**: MySQL vs BQ diff = 0 for both tables (per process / per 1M block), 0 duplicates, 0 orphans. Both tables in ~9.5 min. Verified with `verify_hybrid.py` pattern: per-process counts capped at BQ max id.
+- **Not viable alternatives checked**: Datastream/binlog CDC — both Plex MySQL servers are **5.1.44** with `log_bin=OFF` (unsupported by Datastream/Debezium, would need restart + major upgrade). Filtering by account code (411xxx) does not separate auto from manual: manual entries hit the same accounts.
+- **Side note for dashboards**: `plex_reportes.libro_mayor` has 3.37M rows; aggregated by day/empresa/sucursal/cuenta/leyenda it is 91K. Concepto (ticket numbers) is only needed in the raw table.
+
 ## 📊 Current Status
 
 ### **Cloud Deployment (Active since 2026-03-15)**
@@ -123,6 +135,7 @@ Sistema ETL para farmacéuticas que extrae datos de MySQL (Plex/Quantio) y los c
 - ✅ Full refresh verified: 146M rows, 66 tables, reporte_ventas continuo
 - ✅ **Cost optimized** (2026-03-18): schema caching, reduced logging, downsized compute
 - ✅ **OOM fix** (2026-04-06): reduced chunk_size for catalogs group (medicamentos 100K, stocklotes 100K) — pending verification 2026-04-07
+- ✅ **asientos hybrid strategy** (2026-09-29): `hybrid_process` for asientos/asientos_detalle, MySQL↔BQ diff = 0. Heavy group now ~20 min (asientos pair ~9.5 min) — pending verification of automated run 2026-09-30
 - ⏳ Biweekly full refresh via Cloud Run Job (pending setup, ~$4.50/mo)
 
 ### **Schedule (Argentina time, Mon-Sat)**
@@ -266,6 +279,6 @@ python -c "from src.utils.mysql_structure_generator import MySQLStructureGenerat
 
 ---
 
-**Last Updated**: 2026-04-06
-**Status**: ✅ Cloud ETL active Mon-Sat, 5 groups, lookback=2, optimized 1vCPU/2GB, chunk sizes reduced for catalogs OOM fix
-**Next Session**: Verify catalogs group completes without OOM on 2026-04-07 + biweekly full refresh via Cloud Run Job
+**Last Updated**: 2026-09-29
+**Status**: ✅ Cloud ETL active Mon-Sat + Sunday catch-up, lookback=5 on transactional groups, 1vCPU/2GB, asientos/asientos_detalle on `hybrid_process`
+**Next Session**: Verify heavy-transactions run of 2026-09-30 (hybrid phases in logs, per-process counts vs MySQL) + aggregated libro_mayor view for Power BI + biweekly full refresh via Cloud Run Job

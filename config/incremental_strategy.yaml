@@ -34,6 +34,13 @@ incremental_strategies:
     watermark_column: null
     filter_logic: null
     
+  hybrid_process:
+    description: "Insert-only processes by PK id range (phase A) + full reload of the edited/manual subset (phase B)"
+    method: "id_range_plus_subset_reload"
+    required_keys: [id_column, process_column, auto_processes]
+    optional_keys: [parent_table, id_margin, auto_id_window, manual_id_window, stale_ids_query]
+    used_by: [asientos, asientos_detalle]
+
   datetime_incremental:
     description: "DELETE last N days from BQ + INSERT last N days from MySQL"
     method: "delete_and_insert"
@@ -172,22 +179,28 @@ databases:
     priority_tables:
       # CRITICAL HIGH-VOLUME TABLES (33M+ rows) - Most aggressive incremental strategy
       asientos_detalle:
-        strategy: "date_incremental"
-        watermark_column: ["FechaHora"]  # From asientos via JOIN
-        lookback_days: 3
+        # Hybrid: process lives in the parent (asientos), resolved via JOIN on IdAsiento (PK prefix).
+        # Must run AFTER asientos in the same group: phase A is capped at the parent's max id in BQ
+        # and phase B deletes every child row whose parent is not an auto process.
+        strategy: "hybrid_process"
+        id_column: "IdAsiento"
+        parent_table: "asientos"
+        process_column: "IdProcesoAsiento"
+        auto_processes: [1, 5]
+        id_margin: 20000
+        auto_id_window: 20000        # ~50K detail rows per window
+        manual_id_window: 1000000    # ~110K manual detail rows per window
+        stale_ids_query: |
+          -- auto asientos whose lines don't balance in BigQuery = born incomplete, finished later in MySQL
+          SELECT d.IdAsiento
+          FROM `{project}.{dataset}.plex_asientos_detalle` d
+          JOIN `{project}.{dataset}.plex_asientos` a USING (IdAsiento)
+          WHERE a.IdProcesoAsiento IN (1, 5)
+          GROUP BY d.IdAsiento
+          HAVING ABS(SUM(d.Debe) - SUM(d.Haber)) > 0.01
         chunk_size: 50000
-        description: "39.7M rows, 2GB - Accounting entries detail - HIGHEST PRIORITY"
-        estimated_rows: 39696786
-        custom_query: |
-          SELECT ad.* 
-          FROM asientos_detalle ad
-          INNER JOIN asientos a ON ad.IdAsiento = a.IdAsiento 
-          WHERE DATE(a.FechaHora) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
-        delete_condition: |
-          WHERE IdAsiento IN (
-            SELECT IdAsiento FROM `plex-etl-project.plex_analytics.plex_asientos` 
-            WHERE DATE(FechaHora) >= DATE_SUB(CURRENT_DATE(), INTERVAL {lookback_days} DAY)
-          )
+        description: "43M rows, 3.9GB - Accounting entries detail - HIGHEST PRIORITY (hybrid, see asientos)"
+        estimated_rows: 42968656
         
       factlineas:
         strategy: "date_incremental"
@@ -207,12 +220,29 @@ databases:
           )
         
       asientos:
-        strategy: "date_incremental"
-        watermark_column: ["FechaHora"]
-        lookback_days: 3
+        # Hybrid (2026-09-29): FechaHora is NOT indexed and manual entries carry typed dates
+        # (1977..2027), so date-based incremental was both slow and lossy.
+        #  - IdProcesoAsiento 1 (facturas) + 5 (cobranzas) = 96.5% of rows, insert-only,
+        #    IdAsiento chronological -> phase A reloads (max_auto_id - id_margin, max_id] by PK range
+        #  - everything else (2, 3, 4, NULL ~615K rows) is deleted and reloaded in full every run
+        strategy: "hybrid_process"
+        id_column: "IdAsiento"
+        process_column: "IdProcesoAsiento"
+        auto_processes: [1, 5]
+        id_margin: 20000             # ~2 days of ids; covers a run that died mid-load
+        auto_id_window: 50000        # ids per MySQL query in phase A
+        manual_id_window: 1000000    # ids per MySQL query in phase B (~35K manual rows each)
+        stale_ids_query: |
+          -- auto asientos whose lines don't balance in BigQuery = born incomplete, finished later in MySQL
+          SELECT d.IdAsiento
+          FROM `{project}.{dataset}.plex_asientos_detalle` d
+          JOIN `{project}.{dataset}.plex_asientos` a USING (IdAsiento)
+          WHERE a.IdProcesoAsiento IN (1, 5)
+          GROUP BY d.IdAsiento
+          HAVING ABS(SUM(d.Debe) - SUM(d.Haber)) > 0.01
         chunk_size: 50000
-        description: "16.4M rows, 1.2GB - Accounting entries - CRITICAL"
-        estimated_rows: 16362567
+        description: "17.7M rows, 1.7GB - Accounting entries - CRITICAL (hybrid by IdProcesoAsiento)"
+        estimated_rows: 17677482
         
       factcabecera:
         strategy: "date_incremental"
